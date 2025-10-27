@@ -1,0 +1,185 @@
+import os
+from typing import List, Dict
+import PyPDF2
+from docx import Document as DocxDocument
+# import spacy
+# from transformers import pipeline
+# from sentence_transformers import SentenceTransformer
+# from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
+
+from app.core.config import settings
+
+
+class NLPService:
+    def __init__(self):
+        """Initialize NLP models"""
+        print("⚠️  Running in LITE mode - NLP features disabled")
+        print("   To enable NLP: rebuild with full Dockerfile")
+        self.nlp = None
+        
+        # Lazy load transformers (only when needed)
+        self._summarizer = None
+        self._sentence_transformer = None
+    
+    @property
+    def summarizer(self):
+        """Lazy load summarization model"""
+        if self._summarizer is None:
+            print("⚠️  Summarization not available in LITE mode")
+            raise Exception("NLP features disabled. Rebuild with full Dockerfile to enable.")
+        return self._summarizer
+    
+    @property
+    def sentence_transformer(self):
+        """Lazy load sentence transformer"""
+        if self._sentence_transformer is None:
+            print("⚠️  Sentence transformer not available in LITE mode")
+            raise Exception("NLP features disabled. Rebuild with full Dockerfile to enable.")
+        return self._sentence_transformer
+    
+    def extract_text_from_pdf(self, file_path: str) -> str:
+        """Extract text from PDF file"""
+        text = ""
+        try:
+            with open(file_path, 'rb') as file:
+                pdf_reader = PyPDF2.PdfReader(file)
+                for page in pdf_reader.pages:
+                    text += page.extract_text() + "\n"
+        except Exception as e:
+            print(f"Error extracting PDF: {e}")
+            raise Exception(f"Failed to extract text from PDF: {str(e)}")
+        
+        return text.strip()
+    
+    def extract_text_from_docx(self, file_path: str) -> str:
+        """Extract text from DOCX file"""
+        text = ""
+        try:
+            doc = DocxDocument(file_path)
+            for paragraph in doc.paragraphs:
+                text += paragraph.text + "\n"
+        except Exception as e:
+            print(f"Error extracting DOCX: {e}")
+            raise Exception(f"Failed to extract text from DOCX: {str(e)}")
+        
+        return text.strip()
+    
+    def extract_text(self, file_path: str, file_format: str) -> str:
+        """Extract text from document based on format"""
+        if file_format.lower() == 'pdf':
+            return self.extract_text_from_pdf(file_path)
+        elif file_format.lower() == 'docx':
+            return self.extract_text_from_docx(file_path)
+        else:
+            raise ValueError(f"Unsupported file format: {file_format}")
+    
+    def extract_keywords(self, text: str, top_k: int = 10) -> List[str]:
+        """Extract keywords using spaCy"""
+        if not self.nlp:
+            raise Exception("spaCy model not loaded")
+        
+        # Process text
+        doc = self.nlp(text[:1000000])  # Limit to 1M chars
+        
+        # Extract noun phrases and named entities
+        keywords = set()
+        
+        # Get noun chunks
+        for chunk in doc.noun_chunks:
+            if len(chunk.text.split()) <= 3:  # Max 3 words
+                keywords.add(chunk.text.lower())
+        
+        # Get named entities
+        for ent in doc.ents:
+            if ent.label_ in ['ORG', 'PERSON', 'GPE', 'PRODUCT', 'EVENT']:
+                keywords.add(ent.text.lower())
+        
+        # Get important nouns and adjectives
+        for token in doc:
+            if token.pos_ in ['NOUN', 'PROPN'] and not token.is_stop and len(token.text) > 3:
+                keywords.add(token.text.lower())
+        
+        # Return top_k keywords (sorted by frequency or importance)
+        keywords_list = list(keywords)[:top_k]
+        return keywords_list
+    
+    def summarize_text(self, text: str, max_length: int = 150, min_length: int = 50) -> str:
+        """Summarize text using transformers"""
+        
+        # Clean and prepare text
+        text = text.strip()
+        
+        # If text is too short, return as is
+        if len(text.split()) < min_length:
+            return text
+        
+        # Split long text into chunks (max 1024 tokens for BART)
+        max_chunk_length = 1024
+        words = text.split()
+        
+        if len(words) > max_chunk_length:
+            # Take first chunk for summary
+            text = ' '.join(words[:max_chunk_length])
+        
+        try:
+            # Generate summary
+            summary = self.summarizer(
+                text,
+                max_length=max_length,
+                min_length=min_length,
+                do_sample=False
+            )
+            return summary[0]['summary_text']
+        except Exception as e:
+            print(f"Summarization error: {e}")
+            # Fallback: return first few sentences
+            sentences = text.split('.')[:5]
+            return '.'.join(sentences) + '.'
+    
+    def compute_document_embeddings(self, texts: List[str]) -> np.ndarray:
+        """Compute embeddings for documents"""
+        embeddings = self.sentence_transformer.encode(texts)
+        return embeddings
+    
+    def compute_similarity(self, embeddings: np.ndarray) -> np.ndarray:
+        """Compute cosine similarity between document embeddings"""
+        # Simple dot product similarity (cosine similarity approximation)
+        # Normalize embeddings
+        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+        normalized = embeddings / norms
+        similarity_matrix = np.dot(normalized, normalized.T)
+        return similarity_matrix
+    
+    def extract_references(self, text: str) -> List[Dict[str, str]]:
+        """Extract references from text (simple heuristic)"""
+        references = []
+        
+        # Look for common reference patterns
+        lines = text.split('\n')
+        in_references_section = False
+        
+        for line in lines:
+            line = line.strip()
+            
+            # Detect references section
+            if any(keyword in line.lower() for keyword in ['references', 'bibliography', 'works cited']):
+                in_references_section = True
+                continue
+            
+            # Extract reference if in references section
+            if in_references_section and line:
+                # Simple pattern: look for year in parentheses
+                if '(' in line and ')' in line:
+                    references.append({
+                        'teks_referensi': line,
+                        'penulis': None,
+                        'tahun': None,
+                        'judul_publikasi': None
+                    })
+        
+        return references
+
+
+# Create singleton instance
+nlp_service = NLPService()

@@ -1,0 +1,52 @@
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements first for better caching
+COPY requirements.txt .
+
+# Upgrade pip
+RUN pip install --upgrade pip
+
+# Install core dependencies only (fast build for testing)
+RUN pip install --default-timeout=1000 --retries 5 \
+    fastapi==0.109.0 \
+    uvicorn[standard]==0.27.0 \
+    pydantic==2.5.3 \
+    pydantic-settings==2.1.0 \
+    pydantic[email]==2.5.3 \
+    sqlalchemy==2.0.25 \
+    alembic==1.13.1 \
+    psycopg2-binary==2.9.9 \
+    redis==5.0.1 \
+    python-jose[cryptography]==3.3.0 \
+    passlib[bcrypt]==1.7.4 \
+    python-multipart==0.0.6 \
+    bcrypt==4.1.2 \
+    PyPDF2==3.0.1 \
+    pdfplumber==0.10.3 \
+    python-docx==1.1.0 \
+    python-dotenv==1.0.0 \
+    aiofiles==23.2.1 \
+    pillow==10.2.0 \
+    numpy==1.24.3
+
+# Copy application code
+COPY . .
+
+# Create directories for file storage
+RUN mkdir -p /app/uploads /app/logs
+
+# Expose port
+EXPOSE 8000
+
+# Command to run the application
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
