@@ -3,21 +3,24 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.core.database import Base
 
-# Association tables for many-to-many relationships
+# --- Association Tables (Many-to-Many) ---
+
+# Tabel Asosiasi Dokumen <-> Tag
 dokumen_tag = Table(
     'dokumen_tag',
     Base.metadata,
-    Column('dokumen_id', Integer, ForeignKey('dokumen.id', ondelete='CASCADE')),
-    Column('tag_id', Integer, ForeignKey('tag.id', ondelete='CASCADE'))
+    Column('dokumen_id', Integer, ForeignKey('dokumen.id', ondelete='CASCADE'), primary_key=True),
+    Column('tag_id', Integer, ForeignKey('tag.id', ondelete='CASCADE'), primary_key=True)
 )
 
-dokumen_kata = Table(
-    'dokumen_kata',
-    Base.metadata,
-    Column('dokumen_id', Integer, ForeignKey('dokumen.id', ondelete='CASCADE')),
-    Column('kata_kunci_id', Integer, ForeignKey('kata_kunci.id', ondelete='CASCADE'))
-)
+# Tabel Asosiasi Dokumen <-> Kata Kunci (Menggunakan Class agar bisa diimport eksplisit)
+class DokumenKata(Base):
+    __tablename__ = 'dokumen_kata'
+    dokumen_id = Column(Integer, ForeignKey('dokumen.id', ondelete='CASCADE'), primary_key=True)
+    kata_kunci_id = Column(Integer, ForeignKey('kata_kunci.id', ondelete='CASCADE'), primary_key=True)
 
+
+# --- Main Models ---
 
 class User(Base):
     __tablename__ = "users"
@@ -32,8 +35,8 @@ class User(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
     # Relationships
-    mahasiswa = relationship("Mahasiswa", back_populates="user", uselist=False, cascade="all, delete-orphan")
-    dosen = relationship("Dosen", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    mahasiswa_profile = relationship("Mahasiswa", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    dosen_profile = relationship("Dosen", back_populates="user", uselist=False, cascade="all, delete-orphan")
 
 
 class Mahasiswa(Base):
@@ -47,8 +50,8 @@ class Mahasiswa(Base):
     dosen_pembimbing_id = Column(Integer, ForeignKey('dosen.id', ondelete='SET NULL'))
     
     # Relationships
-    user = relationship("User", back_populates="mahasiswa")
-    dosen_pembimbing = relationship("Dosen", back_populates="mahasiswa_bimbingan", foreign_keys=[dosen_pembimbing_id])
+    user = relationship("User", back_populates="mahasiswa_profile")
+    dosen_pembimbing = relationship("Dosen", back_populates="mahasiswa_bimbingan")
     dokumen = relationship("Dokumen", back_populates="mahasiswa", cascade="all, delete-orphan")
 
 
@@ -58,11 +61,12 @@ class Dosen(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), unique=True, nullable=False)
     nip = Column(String(50), unique=True, index=True, nullable=False)
-    departemen = Column(String(255))
+    jabatan = Column(String(255))      # Disesuaikan dari 'departemen' ke 'jabatan' agar konsisten dengan schema
+    bidang_keahlian = Column(String(255)) # Tambahan agar konsisten dengan schema
     
     # Relationships
-    user = relationship("User", back_populates="dosen")
-    mahasiswa_bimbingan = relationship("Mahasiswa", back_populates="dosen_pembimbing", foreign_keys=[Mahasiswa.dosen_pembimbing_id])
+    user = relationship("User", back_populates="dosen_profile")
+    mahasiswa_bimbingan = relationship("Mahasiswa", back_populates="dosen_pembimbing")
     catatan = relationship("Catatan", back_populates="dosen", cascade="all, delete-orphan")
 
 
@@ -77,15 +81,31 @@ class Dokumen(Base):
     format = Column(String(10))  # 'pdf' or 'docx'
     ukuran_kb = Column(Integer)
     tanggal_unggah = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Hasil Analisis NLP
     ringkasan = Column(Text)
     status_analisis = Column(String(50), default='pending')  # pending, processing, completed, failed
     
     # Relationships
     mahasiswa = relationship("Mahasiswa", back_populates="dokumen")
+    
+    # Many-to-Many
     tags = relationship("Tag", secondary=dokumen_tag, back_populates="dokumen")
-    kata_kunci = relationship("KataKunci", secondary=dokumen_kata, back_populates="dokumen")
+    kata_kunci = relationship("KataKunci", secondary="dokumen_kata", back_populates="dokumen")
+    
+    # One-to-Many
     referensi = relationship("Referensi", back_populates="dokumen", cascade="all, delete-orphan")
     catatan = relationship("Catatan", back_populates="dokumen", cascade="all, delete-orphan")
+    
+    # Similarity Relationships
+    similarities_source = relationship("DocumentSimilarity", 
+                                     foreign_keys="[DocumentSimilarity.dokumen_1_id]",
+                                     back_populates="dokumen_1",
+                                     cascade="all, delete-orphan")
+    similarities_target = relationship("DocumentSimilarity", 
+                                     foreign_keys="[DocumentSimilarity.dokumen_2_id]",
+                                     back_populates="dokumen_2",
+                                     cascade="all, delete-orphan")
 
 
 class Tag(Base):
@@ -107,7 +127,7 @@ class KataKunci(Base):
     frekuensi = Column(Integer, default=1)
     
     # Relationships
-    dokumen = relationship("Dokumen", secondary=dokumen_kata, back_populates="kata_kunci")
+    dokumen = relationship("Dokumen", secondary="dokumen_kata", back_populates="kata_kunci")
 
 
 class Referensi(Base):
@@ -119,6 +139,7 @@ class Referensi(Base):
     penulis = Column(String(500))
     tahun = Column(Integer)
     judul_publikasi = Column(String(500))
+    nomor = Column(String(50)) # Menambahkan kolom nomor (misal "1", "[12]")
     is_valid = Column(Boolean, default=False)
     catatan_validasi = Column(Text)
     
@@ -151,3 +172,7 @@ class DocumentSimilarity(Base):
     dokumen_2_id = Column(Integer, ForeignKey('dokumen.id', ondelete='CASCADE'), nullable=False)
     similarity_score = Column(Float, nullable=False)
     calculated_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    dokumen_1 = relationship("Dokumen", foreign_keys=[dokumen_1_id], back_populates="similarities_source")
+    dokumen_2 = relationship("Dokumen", foreign_keys=[dokumen_2_id], back_populates="similarities_target")

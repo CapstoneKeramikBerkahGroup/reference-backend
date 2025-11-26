@@ -9,7 +9,7 @@ from app.models.models import (
     Catatan,
     DocumentSimilarity,
     dokumen_tag,
-    dokumen_kata
+    DokumenKata
 )
 
 __all__ = [
@@ -23,5 +23,5 @@ __all__ = [
     "Catatan",
     "DocumentSimilarity",
     "dokumen_tag",
-    "dokumen_kata"
+    "DokumenKata"
 ]

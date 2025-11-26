@@ -55,7 +55,8 @@ RUN pip install --default-timeout=1000 --retries 5 \
 RUN pip install --default-timeout=1000 --retries 5 \
     PyPDF2==3.0.1 \
     pdfplumber==0.10.3 \
-    python-docx==1.1.0
+    python-docx==1.1.0 \
+    pymupdf
 
 # Install remaining dependencies
 RUN pip install --default-timeout=1000 --retries 5 \

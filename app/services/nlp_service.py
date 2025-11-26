@@ -16,7 +16,8 @@ from .custom_nlp import (
     initialize_summarizer,
     initialize_embedding_model,
     extract_text_from_pdf,
-    extract_text_from_docx
+    extract_text_from_docx,
+    extract_references
 )
 
 logger = logging.getLogger(__name__)
@@ -79,6 +80,19 @@ class NLPService:
                 logger.error(f"Failed to load SentenceTransformer: {e}")
                 raise
         return self._embedding_model
+    
+    def extract_references_from_text(self, text: str) -> List[Dict[str, str]]:
+        """
+        Wrapper untuk mengekstrak referensi dari teks
+        """
+        logger.info(f"Extracting references from text length: {len(text)}")
+        try:
+            refs = extract_references(text)
+            logger.info(f"Found {len(refs)} references")
+            return refs
+        except Exception as e:
+            logger.error(f"Error extracting references: {e}")
+            return []
     
     def extract_text_from_file(self, file_path: str) -> Optional[str]:
         """
