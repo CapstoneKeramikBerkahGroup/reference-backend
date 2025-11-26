@@ -8,8 +8,8 @@ from app.schemas.user_schemas import (
 from app.schemas.document_schemas import (
     TagBase, TagCreate, TagResponse,
     KataKunciBase, KataKunciResponse,
-    ReferensiBase, ReferensiCreate, ReferensiResponse,
-    CatatanBase, CatatanCreate, CatatanResponse,
+    ReferensiBase, ReferensiCreate, ReferensiResponse, ReferensiValidationRequest,
+    CatatanBase, CatatanCreate, CatatanUpdate, CatatanResponse,
     DokumenBase, DokumenCreate, DokumenResponse, DokumenDetailResponse,
     KeywordExtractionRequest, KeywordExtractionResponse,
     SummarizationRequest, SummarizationResponse,
@@ -26,8 +26,8 @@ __all__ = [
     # Document schemas
     "TagBase", "TagCreate", "TagResponse",
     "KataKunciBase", "KataKunciResponse",
-    "ReferensiBase", "ReferensiCreate", "ReferensiResponse",
-    "CatatanBase", "CatatanCreate", "CatatanResponse",
+    "ReferensiBase", "ReferensiCreate", "ReferensiResponse", "ReferensiValidationRequest",
+    "CatatanBase", "CatatanCreate", "CatatanUpdate", "CatatanResponse",
     "DokumenBase", "DokumenCreate", "DokumenResponse", "DokumenDetailResponse",
     
     # NLP schemas

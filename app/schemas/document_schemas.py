@@ -55,6 +55,10 @@ class CatatanBase(BaseModel):
 class CatatanCreate(CatatanBase):
     dokumen_id: int
 
+class CatatanUpdate(BaseModel):
+    isi_catatan: str
+    halaman: Optional[int] = None
+
 class CatatanResponse(CatatanBase):
     id: int
     dokumen_id: int
@@ -64,6 +68,11 @@ class CatatanResponse(CatatanBase):
     
     class Config:
         from_attributes = True
+
+# ============= Validasi Referensi Schemas =============
+class ReferensiValidationRequest(BaseModel):
+    is_valid: bool
+    catatan_validasi: Optional[str] = None
 
 # ============= Dokumen Schemas =============
 class DokumenBase(BaseModel):

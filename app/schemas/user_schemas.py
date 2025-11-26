@@ -51,7 +51,8 @@ class MahasiswaResponse(MahasiswaBase):
 # ============= Dosen Schemas =============
 class DosenBase(BaseModel):
     nip: str
-    departemen: Optional[str] = None
+    jabatan: Optional[str] = None
+    bidang_keahlian: Optional[str] = None
 
 
 class DosenCreate(DosenBase):
