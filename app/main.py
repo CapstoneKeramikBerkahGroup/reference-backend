@@ -6,7 +6,7 @@ import os
 
 from app.core.config import settings
 from app.core.database import engine, Base
-from app.api import auth, documents, users, nlp, visualization
+from app.api import auth, documents, users, nlp, visualization, dosen
 
 # Create uploads directory if not exists
 os.makedirs("uploads", exist_ok=True)
@@ -54,6 +54,7 @@ app.include_router(users.router, prefix="/api/users", tags=["Users"])
 app.include_router(documents.router, prefix="/api/documents", tags=["Documents"])
 app.include_router(nlp.router, prefix="/api/nlp", tags=["NLP Processing"])
 app.include_router(visualization.router, prefix="/api/visualization", tags=["Visualization"])
+app.include_router(dosen.router, prefix="/api/dosen", tags=["Dosen"])
 
 
 @app.get("/")
