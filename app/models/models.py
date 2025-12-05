@@ -45,14 +45,16 @@ class Mahasiswa(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), unique=True, nullable=False)
     nim = Column(String(50), unique=True, index=True, nullable=False)
-    program_studi = Column(String(255))
+    program_studi = Column(String(255), default='Sistem Informasi')  # Default S1 Sistem Informasi
     angkatan = Column(Integer)
+    bidang_keahlian = Column(String(255))  # Specialization: EISD, EDM, EIM, ERP, SAG
     dosen_pembimbing_id = Column(Integer, ForeignKey('dosen.id', ondelete='SET NULL'))
     
     # Relationships
     user = relationship("User", back_populates="mahasiswa_profile")
     dosen_pembimbing = relationship("Dosen", back_populates="mahasiswa_bimbingan")
     dokumen = relationship("Dokumen", back_populates="mahasiswa", cascade="all, delete-orphan")
+    pembimbing_requests = relationship("PembimbingRequest", back_populates="mahasiswa", cascade="all, delete-orphan")
 
 
 class Dosen(Base):
@@ -68,6 +70,7 @@ class Dosen(Base):
     user = relationship("User", back_populates="dosen_profile")
     mahasiswa_bimbingan = relationship("Mahasiswa", back_populates="dosen_pembimbing")
     catatan = relationship("Catatan", back_populates="dosen", cascade="all, delete-orphan")
+    pembimbing_requests = relationship("PembimbingRequest", back_populates="dosen", cascade="all, delete-orphan")
 
 
 class Dokumen(Base):
@@ -140,8 +143,10 @@ class Referensi(Base):
     tahun = Column(Integer)
     judul_publikasi = Column(String(500))
     nomor = Column(String(50)) # Menambahkan kolom nomor (misal "1", "[12]")
-    is_valid = Column(Boolean, default=False)
+    status_validasi = Column(String(50), default='pending')  # 'pending', 'validated', 'rejected'
     catatan_validasi = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
     # Relationships
     dokumen = relationship("Dokumen", back_populates="referensi")
@@ -161,6 +166,24 @@ class Catatan(Base):
     # Relationships
     dokumen = relationship("Dokumen", back_populates="catatan")
     dosen = relationship("Dosen", back_populates="catatan")
+
+
+class PembimbingRequest(Base):
+    """Model untuk request pembimbing dari mahasiswa ke dosen"""
+    __tablename__ = "pembimbing_request"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    mahasiswa_id = Column(Integer, ForeignKey('mahasiswa.id', ondelete='CASCADE'), nullable=False)
+    dosen_id = Column(Integer, ForeignKey('dosen.id', ondelete='CASCADE'), nullable=False)
+    status = Column(String(20), default='pending')  # pending, accepted, rejected
+    pesan_mahasiswa = Column(Text)
+    pesan_dosen = Column(Text)  # Pesan feedback dari dosen
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Relationships
+    mahasiswa = relationship("Mahasiswa", back_populates="pembimbing_requests")
+    dosen = relationship("Dosen", back_populates="pembimbing_requests")
 
 
 class DocumentSimilarity(Base):
