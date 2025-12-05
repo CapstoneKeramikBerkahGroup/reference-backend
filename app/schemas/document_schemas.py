@@ -41,7 +41,7 @@ class ReferensiCreate(ReferensiBase):
 class ReferensiResponse(ReferensiBase):
     id: int
     dokumen_id: int
-    is_valid: bool
+    status_validasi: str
     catatan_validasi: Optional[str] = None
     
     class Config:
@@ -71,7 +71,7 @@ class CatatanResponse(CatatanBase):
 
 # ============= Validasi Referensi Schemas =============
 class ReferensiValidationRequest(BaseModel):
-    is_valid: bool
+    status_validasi: str # 'validated' or 'rejected'
     catatan_validasi: Optional[str] = None
 
 # ============= Dokumen Schemas =============

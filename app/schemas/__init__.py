@@ -2,7 +2,10 @@ from app.schemas.user_schemas import (
     UserBase, UserCreate, UserLogin, UserResponse,
     MahasiswaBase, MahasiswaCreate, MahasiswaResponse,
     DosenBase, DosenCreate, DosenResponse,
-    Token, TokenData
+    Token, TokenData,
+    CaptchaResponse, LoginWithCaptcha,
+    ForgotPasswordRequest, VerifyCodeRequest, ResetPasswordRequest,
+    ProfileUpdateRequest, ChangePasswordRequest
 )
 
 from app.schemas.document_schemas import (
@@ -22,6 +25,11 @@ __all__ = [
     "MahasiswaBase", "MahasiswaCreate", "MahasiswaResponse",
     "DosenBase", "DosenCreate", "DosenResponse",
     "Token", "TokenData",
+    
+    # Auth schemas - CAPTCHA & Forgot Password
+    "CaptchaResponse", "LoginWithCaptcha",
+    "ForgotPasswordRequest", "VerifyCodeRequest", "ResetPasswordRequest",
+    "ProfileUpdateRequest", "ChangePasswordRequest",
     
     # Document schemas
     "TagBase", "TagCreate", "TagResponse",
