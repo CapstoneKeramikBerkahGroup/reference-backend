@@ -2,16 +2,24 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from typing import Optional
+import uuid
 
 from app.core.database import get_db
 from app.core.security import verify_password, get_password_hash, create_access_token, decode_access_token
+from app.core.config import settings
 from app.models import User, Mahasiswa, Dosen
 from app.schemas import (
     UserCreate, UserResponse, UserLogin,
     MahasiswaCreate, MahasiswaResponse,
     DosenCreate, DosenResponse,
-    Token, TokenData
+    Token, TokenData,
+    CaptchaResponse, LoginWithCaptcha,
+    ForgotPasswordRequest, VerifyCodeRequest, ResetPasswordRequest,
+    ProfileUpdateRequest, ChangePasswordRequest
 )
+from app.services.captcha_service import captcha_service
+from app.services.redis_service import redis_service
+from app.services.email_service import send_verification_email, send_password_changed_notification, generate_verification_code
 
 router = APIRouter()
 
@@ -122,7 +130,8 @@ async def register_mahasiswa(
         user_id=user.id,
         nim=mahasiswa_data.nim,
         program_studi=mahasiswa_data.program_studi,
-        angkatan=mahasiswa_data.angkatan
+        angkatan=mahasiswa_data.angkatan,
+        bidang_keahlian=mahasiswa_data.bidang_keahlian
     )
     db.add(mahasiswa)
     db.commit()
@@ -161,7 +170,8 @@ async def register_dosen(
     dosen = Dosen(
         user_id=user.id,
         nip=dosen_data.nip,
-        departemen=dosen_data.departemen
+        jabatan=dosen_data.jabatan,
+        bidang_keahlian=dosen_data.bidang_keahlian
     )
     db.add(dosen)
     db.commit()
@@ -197,12 +207,356 @@ async def login(
 
 
 @router.get("/me", response_model=UserResponse)
-async def get_me(current_user: User = Depends(get_current_user)):
+async def get_me(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """Get current user information"""
-    return current_user
+    response = UserResponse.from_orm(current_user)
+    
+    # Add bidang_keahlian from mahasiswa or dosen profile
+    if current_user.role == "mahasiswa":
+        mahasiswa = db.query(Mahasiswa).filter(Mahasiswa.user_id == current_user.id).first()
+        if mahasiswa:
+            response.bidang_keahlian = mahasiswa.bidang_keahlian
+    elif current_user.role == "dosen":
+        dosen = db.query(Dosen).filter(Dosen.user_id == current_user.id).first()
+        if dosen:
+            response.bidang_keahlian = dosen.bidang_keahlian
+    
+    return response
 
 
 @router.post("/logout")
 async def logout(current_user: User = Depends(get_current_user)):
     """Logout endpoint (client should delete token)"""
     return {"message": "Successfully logged out"}
+
+
+# ============= CAPTCHA Endpoints =============
+
+@router.get("/captcha", response_model=CaptchaResponse)
+async def get_captcha():
+    """
+    Generate new CAPTCHA
+    Returns session_id and base64 captcha image
+    """
+    # Generate unique session ID
+    session_id = str(uuid.uuid4())
+    
+    # Create CAPTCHA
+    captcha_data = captcha_service.create_captcha()
+    
+    # Store CAPTCHA text in Redis (5 minutes expiration)
+    redis_service.store_captcha(session_id, captcha_data["text"], expire_minutes=5)
+    
+    return {
+        "session_id": session_id,
+        "captcha_image": captcha_data["image"]
+    }
+
+
+@router.post("/login/captcha", response_model=Token)
+async def login_with_captcha(
+    login_data: LoginWithCaptcha,
+    db: Session = Depends(get_db)
+):
+    """
+    Login with CAPTCHA validation
+    Validates CAPTCHA before checking credentials
+    """
+    # 1. Validate CAPTCHA first
+    stored_captcha = redis_service.get_captcha(login_data.session_id)
+    
+    if not stored_captcha:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="CAPTCHA expired or invalid. Please refresh CAPTCHA."
+        )
+    
+    if not captcha_service.validate_captcha(login_data.captcha_text, stored_captcha):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid CAPTCHA. Please try again."
+        )
+    
+    # Delete used CAPTCHA
+    redis_service.delete_captcha(login_data.session_id)
+    
+    # 2. Check rate limiting (only in production)
+    if not settings.DEBUG:
+        rate_limit_key = f"login_attempts:{login_data.email}"
+        if not redis_service.check_rate_limit(rate_limit_key, max_attempts=5, window_minutes=15):
+            ttl = redis_service.get_rate_limit_ttl(rate_limit_key)
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Too many login attempts. Please try again in {ttl // 60} minutes."
+            )
+    else:
+        print(f"🔓 DEBUG MODE: Rate limiting disabled for login")
+    
+    # 3. Validate user credentials
+    user = db.query(User).filter(User.email == login_data.email).first()
+    
+    if not user or not verify_password(login_data.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Inactive user"
+        )
+    
+    # 4. Create access token
+    access_token = create_access_token(
+        data={"sub": str(user.id), "email": user.email, "role": user.role}
+    )
+    
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
+# ============= Forgot Password Endpoints =============
+
+@router.post("/forgot-password")
+async def forgot_password(
+    request: ForgotPasswordRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Request password reset
+    Sends verification code to email if user exists
+    """
+    # Check if user exists
+    user = db.query(User).filter(User.email == request.email).first()
+    
+    if not user:
+        # Don't reveal if email exists (security best practice)
+        return {
+            "message": "If the email exists, a verification code has been sent.",
+            "success": True
+        }
+    
+    # Check rate limiting (only in production)
+    if not settings.DEBUG:
+        rate_limit_key = f"forgot_password:{request.email}"
+        if not redis_service.check_rate_limit(rate_limit_key, max_attempts=3, window_minutes=60):
+            ttl = redis_service.get_rate_limit_ttl(rate_limit_key)
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Too many password reset requests. Please try again in {ttl // 60} minutes."
+            )
+    else:
+        print(f"🔓 DEBUG MODE: Rate limiting disabled for forgot password")
+    
+    # Generate verification code
+    code = generate_verification_code(length=6)
+    
+    # Store code in Redis
+    redis_service.store_verification_code(
+        request.email, 
+        code, 
+        expire_minutes=settings.VERIFICATION_CODE_EXPIRE_MINUTES
+    )
+    
+    # Send email
+    try:
+        await send_verification_email(request.email, code, user.nama)
+    except Exception as e:
+        print(f"⚠️ Failed to send email: {e}")
+        print(f"🔑 DEVELOPMENT MODE - Verification Code for {request.email}: {code}")
+        
+        # In development, don't fail - just log the code
+        if settings.DEBUG:
+            print(f"✅ Code stored in Redis for testing: {code}")
+            # Continue without throwing error in DEBUG mode
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to send verification email. Please try again later."
+            )
+    
+    return {
+        "message": "Verification code sent to your email.",
+        "success": True,
+        "expires_in_minutes": settings.VERIFICATION_CODE_EXPIRE_MINUTES
+    }
+
+
+@router.post("/verify-code")
+async def verify_code(request: VerifyCodeRequest):
+    """
+    Verify the code sent to email
+    Returns success if code is valid
+    """
+    # Get stored verification data
+    verify_data = redis_service.get_verification_code(request.email)
+    
+    if not verify_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Verification code expired or not found. Please request a new code."
+        )
+    
+    # Check max attempts (5 attempts allowed)
+    if verify_data["attempts"] >= 5:
+        redis_service.delete_verification_code(request.email)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Too many failed attempts. Please request a new verification code."
+        )
+    
+    # Validate code
+    if verify_data["code"] != request.code:
+        # Increment failed attempts
+        attempts = redis_service.increment_verification_attempts(request.email)
+        remaining = 5 - attempts
+        
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid verification code. {remaining} attempts remaining."
+        )
+    
+    return {
+        "message": "Verification code is valid.",
+        "success": True
+    }
+
+
+@router.post("/reset-password")
+async def reset_password(
+    request: ResetPasswordRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Reset password using verification code
+    Validates code and updates password
+    """
+    # Get stored verification data
+    verify_data = redis_service.get_verification_code(request.email)
+    
+    if not verify_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Verification code expired or not found. Please request a new code."
+        )
+    
+    # Check max attempts
+    if verify_data["attempts"] >= 5:
+        redis_service.delete_verification_code(request.email)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Too many failed attempts. Please request a new verification code."
+        )
+    
+    # Validate code
+    if verify_data["code"] != request.code:
+        attempts = redis_service.increment_verification_attempts(request.email)
+        remaining = 5 - attempts
+        
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid verification code. {remaining} attempts remaining."
+        )
+    
+    # Get user
+    user = db.query(User).filter(User.email == request.email).first()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found."
+        )
+    
+    # Update password
+    user.hashed_password = get_password_hash(request.new_password)
+    db.commit()
+    
+    # Delete verification code
+    redis_service.delete_verification_code(request.email)
+    
+    # Send confirmation email
+    try:
+        await send_password_changed_notification(request.email, user.nama)
+    except Exception as e:
+        print(f"Failed to send confirmation email: {e}")
+        # Don't fail the request if email fails
+    
+    return {
+        "message": "Password reset successfully. You can now login with your new password.",
+        "success": True
+    }
+
+
+# ============= Profile Management Endpoints =============
+
+@router.put("/profile", response_model=UserResponse)
+async def update_profile(
+    request: ProfileUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Update user profile (name, email, and bidang_keahlian for dosen)
+    """
+    # Check if email is already taken by another user
+    if request.email != current_user.email:
+        existing_user = db.query(User).filter(User.email == request.email, User.id != current_user.id).first()
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered"
+            )
+    
+    # Update user
+    current_user.nama = request.nama
+    current_user.email = request.email
+    
+    # Update bidang_keahlian for dosen or mahasiswa
+    if request.bidang_keahlian:
+        if current_user.role == "dosen":
+            dosen = db.query(Dosen).filter(Dosen.user_id == current_user.id).first()
+            if dosen:
+                dosen.bidang_keahlian = request.bidang_keahlian
+        elif current_user.role == "mahasiswa":
+            mahasiswa = db.query(Mahasiswa).filter(Mahasiswa.user_id == current_user.id).first()
+            if mahasiswa:
+                mahasiswa.bidang_keahlian = request.bidang_keahlian
+    
+    db.commit()
+    db.refresh(current_user)
+    
+    return current_user
+
+
+@router.put("/change-password")
+async def change_password(
+    request: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Change user password (requires current password)
+    """
+    # Verify current password
+    if not verify_password(request.current_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect"
+        )
+    
+    # Hash new password
+    hashed_password = get_password_hash(request.new_password)
+    
+    # Update password
+    current_user.hashed_password = hashed_password
+    
+    db.commit()
+    
+    return {
+        "message": "Password changed successfully",
+        "success": True
+    }
