@@ -1,8 +1,9 @@
 # Core Framework
 fastapi==0.109.0
 uvicorn[standard]==0.27.0
-pydantic==2.5.3
-pydantic-settings==2.1.0
+pydantic==2.7.0
+pydantic-settings==2.3.0
+email-validator==2.2.0
 
 # Database
 sqlalchemy==2.0.25
@@ -40,6 +41,13 @@ reportlab==4.0.9
 python-dotenv==1.0.0
 aiofiles==23.2.1
 pillow==10.2.0
+
+# Email
+# Use older version compatible with pydantic 2.7
+fastapi-mail==1.4.1
+
+# CAPTCHA & Security
+captcha==0.5.0
 
 # CORS
 fastapi-cors==0.0.6

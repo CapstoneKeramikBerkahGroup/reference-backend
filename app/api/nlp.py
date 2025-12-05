@@ -85,7 +85,8 @@ async def process_document_background(dokumen_id: int, db: Session):
             new_ref = Referensi(
                 dokumen_id=doc.id,
                 teks_referensi=ref['teks_referensi'],
-                nomor=ref.get('nomor') 
+                nomor=ref.get('nomor'),
+                status_validasi='pending'  # Set status default sebagai pending
             )
             db.add(new_ref)
 

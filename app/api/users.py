@@ -44,3 +44,42 @@ async def get_all_dosen(
     """Get all dosen"""
     dosen_list = db.query(Dosen).offset(skip).limit(limit).all()
     return dosen_list
+
+
+@router.put("/mahasiswa/choose-dosen/{dosen_id}")
+async def choose_dosen_pembimbing(
+    dosen_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Mahasiswa memilih dosen pembimbing"""
+    # Pastikan user adalah mahasiswa
+    if current_user.role != "mahasiswa":
+        raise HTTPException(
+            status_code=403,
+            detail="Only mahasiswa can choose dosen pembimbing"
+        )
+    
+    # Get mahasiswa profile
+    mahasiswa = db.query(Mahasiswa).filter(
+        Mahasiswa.user_id == current_user.id
+    ).first()
+    
+    if not mahasiswa:
+        raise HTTPException(status_code=404, detail="Mahasiswa profile not found")
+    
+    # Verify dosen exists
+    dosen = db.query(Dosen).filter(Dosen.id == dosen_id).first()
+    if not dosen:
+        raise HTTPException(status_code=404, detail="Dosen not found")
+    
+    # Update dosen pembimbing
+    mahasiswa.dosen_pembimbing_id = dosen_id
+    db.commit()
+    db.refresh(mahasiswa)
+    
+    return {
+        "message": "Dosen pembimbing successfully selected",
+        "dosen_id": dosen_id,
+        "dosen_nama": dosen.user.nama
+    }

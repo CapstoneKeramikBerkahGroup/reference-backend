@@ -131,7 +131,54 @@ async def get_document_by_id(
     if not dokumen:
         raise HTTPException(status_code=404, detail="Document not found")
     
-    return dokumen
+    # Map referensi with status field
+    referensi_list = []
+    for ref in dokumen.referensi:
+        referensi_dict = {
+            "id": ref.id,
+            "dokumen_id": ref.dokumen_id,
+            "teks_referensi": ref.teks_referensi,
+            "penulis": ref.penulis,
+            "tahun": ref.tahun,
+            "judul_publikasi": ref.judul_publikasi,
+            "nomor": ref.nomor,
+            "status_validasi": ref.status_validasi,
+            "catatan_validasi": ref.catatan_validasi
+        }
+        referensi_list.append(referensi_dict)
+
+    # Build dokumen response
+    dokumen_dict = {
+        "id": dokumen.id,
+        "mahasiswa_id": dokumen.mahasiswa_id,
+        "nama_file": dokumen.nama_file,
+        "path_file": dokumen.path_file,
+        "format": dokumen.format,
+        "ukuran_kb": dokumen.ukuran_kb,
+        "tanggal_unggah": dokumen.tanggal_unggah,
+        "judul": dokumen.judul,
+        "ringkasan": dokumen.ringkasan,
+        "status_analisis": dokumen.status_analisis,
+        "tags": [
+            {"id": tag.id, "nama": tag.nama, "created_at": tag.created_at} for tag in dokumen.tags
+        ],
+        "kata_kunci": [
+            {"id": kk.id, "kata": kk.kata, "frekuensi": kk.frekuensi} for kk in dokumen.kata_kunci
+        ],
+        "referensi": referensi_list,
+        "catatan": [
+            {
+                "id": cat.id,
+                "dokumen_id": cat.dokumen_id,
+                "dosen_id": cat.dosen_id,
+                "isi_catatan": cat.isi_catatan,
+                "halaman": cat.halaman,
+                "created_at": cat.created_at,
+                "updated_at": cat.updated_at
+            } for cat in getattr(dokumen, "catatan", [])
+        ]
+    }
+    return dokumen_dict
 
 
 @router.get("/doc/{dokumen_id}/download")
