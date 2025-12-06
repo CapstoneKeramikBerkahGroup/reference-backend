@@ -9,6 +9,7 @@ import numpy as np
 import hashlib
 from .custom_nlp import (
     extract_keywords_bert,
+    extract_keywords_indonesian,
     generate_summary_bart,
     generate_embeddings,
     calculate_similarity_matrix,
@@ -17,7 +18,9 @@ from .custom_nlp import (
     initialize_embedding_model,
     extract_text_from_pdf,
     extract_text_from_docx,
-    extract_references
+    extract_references,
+    detect_language,
+    preprocess_indonesian_text,
 )
 
 logger = logging.getLogger(__name__)
@@ -122,7 +125,7 @@ class NLPService:
     
     async def extract_keywords(self, text: str, num_keywords: int = 10) -> List[str]:
         """
-        Extract keywords from text using KeyBERT
+        Extract keywords from text using KeyBERT (English) or lightweight method (Indonesian)
         
         Args:
             text: Document text
@@ -134,11 +137,25 @@ class NLPService:
         logger.info(f"Extracting {num_keywords} keywords from text of length {len(text)}")
         
         try:
-            keywords = extract_keywords_bert(
-                text, 
-                self.keyword_extractor,  # This will trigger lazy loading
-                top_n=num_keywords
-            )
+            # Deteksi bahasa
+            lang = detect_language(text)
+            
+            # Untuk bahasa Indonesia, gunakan lightweight extraction (no model needed)
+            if lang == 'id':
+                logger.info("🇮🇩 Detected Indonesian - using lightweight keyword extraction")
+                keywords = extract_keywords_indonesian(text, top_n=num_keywords)
+            else:
+                # Untuk Inggris, gunakan KeyBERT jika available
+                if self.keyword_extractor is None:
+                    logger.warning("KeyBERT not available, falling back to Indonesian method")
+                    keywords = extract_keywords_indonesian(text, top_n=num_keywords)
+                else:
+                    keywords = extract_keywords_bert(
+                        text, 
+                        self.keyword_extractor,
+                        top_n=num_keywords
+                    )
+            
             logger.info(f"Extracted {len(keywords)} keywords: {keywords}")
             return keywords
         except Exception as e:
@@ -147,11 +164,11 @@ class NLPService:
     
     async def generate_summary(self, text: str, max_length: int = 150) -> str:
         """
-        Generate summary from text using BART
+        Generate summary from text using BART (English) or extractive method (Indonesian)
         
         Args:
             text: Document text
-            max_length: Maximum summary length
+            max_length: Maximum summary length (not strictly enforced for extractive)
             
         Returns:
             Summary text
@@ -159,7 +176,22 @@ class NLPService:
         logger.info(f"Generating summary from text of length {len(text)}")
         
         try:
-            summary = generate_summary_bart(text, self.summarizer)  # Lazy load
+            # Deteksi bahasa
+            lang = detect_language(text)
+            
+            # Untuk teks pendek atau bahasa Indonesia, gunakan extractive summary
+            if lang == 'id' or len(text) < 200:
+                logger.info(f"🇮🇩 Generating extractive summary (lang={lang})")
+                from .custom_nlp import create_extractive_summary_indonesian
+                summary = create_extractive_summary_indonesian(text, num_sentences=3)
+            elif self.summarizer is None:
+                logger.warning("BART not available, using extractive summary")
+                from .custom_nlp import create_extractive_summary_indonesian
+                summary = create_extractive_summary_indonesian(text, num_sentences=3)
+            else:
+                # Gunakan BART untuk teks panjang dalam bahasa Inggris
+                summary = generate_summary_bart(text, self.summarizer)
+            
             logger.info(f"Generated summary: {summary[:100]}...")
             return summary
         except Exception as e:
