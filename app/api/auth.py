@@ -161,7 +161,8 @@ async def register_dosen(
     dosen = Dosen(
         user_id=user.id,
         nip=dosen_data.nip,
-        departemen=dosen_data.departemen
+        jabatan=dosen_data.jabatan,
+        bidang_keahlian=dosen_data.bidang_keahlian
     )
     db.add(dosen)
     db.commit()
