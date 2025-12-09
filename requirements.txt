@@ -15,8 +15,7 @@ redis==5.0.1
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 python-multipart==0.0.6
-bcrypt==4.1.2
-email-validator==2.1.0
+bcrypt==4.0.1
 
 # NLP & AI Processing
 transformers==4.36.2
@@ -64,3 +63,5 @@ fastapi-cors==0.0.6
 pytest==7.4.4
 pytest-asyncio==0.23.3
 httpx==0.26.0
+
+pyzotero==1.5.18

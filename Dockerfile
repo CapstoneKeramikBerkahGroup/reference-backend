@@ -15,6 +15,12 @@ RUN apt-get update && apt-get install -y \
     libpng16-16 \
     && rm -rf /var/lib/apt/lists/*
 
+# Upgrade pip first
+RUN pip install --upgrade pip
+
+# Copy requirements first for better caching
+COPY requirements.txt .
+
 # Copy requirements first for better caching
 COPY requirements.txt .
 

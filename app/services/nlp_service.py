@@ -7,6 +7,7 @@ from typing import List, Dict, Optional
 import logging
 import numpy as np
 import hashlib
+import re  
 from .custom_nlp import (
     extract_keywords_bert,
     extract_keywords_indonesian,
@@ -19,6 +20,8 @@ from .custom_nlp import (
     extract_text_from_pdf,
     extract_text_from_docx,
     extract_references,
+    extract_research_gap_sections,
+    fix_common_artifacts
     detect_language,
     preprocess_indonesian_text,
 )
@@ -84,6 +87,70 @@ class NLPService:
                 raise
         return self._embedding_model
     
+    async def analyze_research_gap(self, text1: str, text2: str) -> Dict:
+        from .custom_nlp import extract_research_gap_sections, fix_common_artifacts, generate_summary_bart
+        
+        sections_doc1 = extract_research_gap_sections(text1)
+        sections_doc2 = extract_research_gap_sections(text2)
+        
+        def clean(t): return fix_common_artifacts(t) if t else ""
+
+        l1 = clean(sections_doc1['limitations'])
+        f1 = clean(sections_doc1['future_work'])
+        l2 = clean(sections_doc2['limitations'])
+        f2 = clean(sections_doc2['future_work'])
+
+        # --- FIX "WE" to "THE AUTHORS" ---
+        def neutralize_perspective(text):
+            if not text: return ""
+            t = re.sub(r'(^|\.\s+)We\s', r'\1The authors ', text, flags=re.IGNORECASE)
+            t = re.sub(r'\sour\s', ' their ', t, flags=re.IGNORECASE)
+            return t.strip()
+
+        l1 = neutralize_perspective(l1)
+        f1 = neutralize_perspective(f1)
+        l2 = neutralize_perspective(l2)
+        f2 = neutralize_perspective(f2)
+
+        # --- GENERATE SYNTHESIS (Always Try) ---
+        # Jangan pakai 'if has_content', langsung coba saja.
+        # Jika kosong, tulis "Not stated".
+        
+        combined_context = (
+            f"Compare these two research papers.\n\n"
+            f"Paper 1 Text: {l1 if l1 else 'No limitations stated'}. {f1 if f1 != l1 else ''}\n\n" # Hindari duplikasi jika isinya sama
+            f"Paper 2 Text: {l2 if l2 else 'No limitations stated'}. {f2 if f2 != l2 else ''}\n\n"
+            f"Synthesis of Research Gap (Identify missing aspects and future opportunities):"
+        )
+        
+        # Potong input
+        combined_context = combined_context[:4000]
+        
+        try:
+            gap_synthesis = generate_summary_bart(combined_context, self.summarizer)
+        except Exception as e:
+            logger.error(f"Gap synthesis failed: {e}")
+            gap_synthesis = "Could not synthesize research gap."
+
+        # --- CLEAN UP DISPLAY TEXT ---
+        # Jika limitation dan future work sama persis (hasil fallback), tampilkan di salah satu saja agar UI rapi
+        if l1 == f1 and l1:
+            f1 = "See Limitations section."
+        if l2 == f2 and l2:
+            f2 = "See Limitations section."
+
+        return {
+            "doc1_analysis": {
+                "limitations_text": l1 if len(l1) > 20 else "No specific limitations detected.",
+                "future_work_text": f1 if len(f1) > 20 else "No specific future work detected.",
+            },
+            "doc2_analysis": {
+                "limitations_text": l2 if len(l2) > 20 else "No specific limitations detected.",
+                "future_work_text": f2 if len(f2) > 20 else "No specific future work detected.",
+            },
+            "synthesis": gap_synthesis
+        }
+    
     def extract_references_from_text(self, text: str) -> List[Dict[str, str]]:
         """
         Wrapper untuk mengekstrak referensi dari teks
@@ -124,6 +191,7 @@ class NLPService:
             return None
     
     async def extract_keywords(self, text: str, num_keywords: int = 10) -> List[str]:
+        """Extract keywords from text using KeyBERT"""
         """
         Extract keywords from text using KeyBERT (English) or lightweight method (Indonesian)
         
@@ -135,8 +203,12 @@ class NLPService:
             List of keywords
         """
         logger.info(f"Extracting {num_keywords} keywords from text of length {len(text)}")
-        
         try:
+            keywords = extract_keywords_bert(
+                text, 
+                self.keyword_extractor,  # Lazy loading
+                top_n=num_keywords
+            )
             # Deteksi bahasa
             lang = detect_language(text)
             
@@ -163,6 +235,7 @@ class NLPService:
             return []
     
     async def generate_summary(self, text: str, max_length: int = 150) -> str:
+        """Generate summary from text using BART"""
         """
         Generate summary from text using BART (English) or extractive method (Indonesian)
         
@@ -174,7 +247,6 @@ class NLPService:
             Summary text
         """
         logger.info(f"Generating summary from text of length {len(text)}")
-        
         try:
             # Deteksi bahasa
             lang = detect_language(text)
@@ -199,20 +271,9 @@ class NLPService:
             return "Failed to generate summary"
     
     async def calculate_similarity(self, text1: str, text2: str) -> float:
-        """
-        Calculate similarity between two texts using embeddings
-        
-        Args:
-            text1: First text
-            text2: Second text
-            
-        Returns:
-            Similarity score (0-1)
-        """
+        """Calculate similarity between two texts using embeddings"""
         logger.info("Calculating similarity between two texts")
-        
         try:
-            # Generate embeddings (lazy load model)
             emb1 = generate_embeddings(text1, self.embedding_model)
             emb2 = generate_embeddings(text2, self.embedding_model)
             
@@ -220,7 +281,6 @@ class NLPService:
                 logger.error("Failed to generate embeddings")
                 return 0.0
             
-            # Calculate cosine similarity
             similarity_matrix = calculate_similarity_matrix([emb1, emb2])
             similarity = float(similarity_matrix[0][1])
             
@@ -231,31 +291,20 @@ class NLPService:
             return 0.0
     
     async def generate_embedding(self, text: str) -> Optional[List[float]]:
-        """
-        Generate embedding vector for text with caching
-        
-        Args:
-            text: Input text
-            
-        Returns:
-            Embedding vector as list or None if failed
-        """
-        # Check cache first
+        """Generate embedding vector for text with caching"""
         text_hash = self._get_text_hash(text)
         if text_hash in self.embeddings_cache:
             self.cache_hits += 1
-            logger.info(f"✅ Cache hit for embeddings ({self.cache_hits} hits, {self.cache_misses} misses)")
+            logger.info(f"✅ Cache hit for embeddings ({self.cache_hits} hits)")
             return self.embeddings_cache[text_hash]
         
         self.cache_misses += 1
-        
         try:
             embedding = generate_embeddings(text, self.embedding_model)  # Lazy load
             if embedding is not None:
                 embedding_list = embedding.tolist()
-                # Cache the result
                 self.embeddings_cache[text_hash] = embedding_list
-                logger.info(f"💾 Cached embeddings for {text_hash[:8]}... (cache size: {len(self.embeddings_cache)})")
+                logger.info(f"💾 Cached embeddings")
                 return embedding_list
             return None
         except Exception as e:
@@ -263,49 +312,28 @@ class NLPService:
             return None
     
     def compute_document_embeddings(self, texts: List[str]) -> List[np.ndarray]:
-        """
-        Generate embeddings for multiple documents
-        
-        Args:
-            texts: List of text documents
-            
-        Returns:
-            List of embedding vectors (numpy arrays)
-        """
+        """Generate embeddings for multiple documents"""
         logger.info(f"Computing embeddings for {len(texts)} documents")
-        
         embeddings = []
         for i, text in enumerate(texts):
-            logger.info(f"Generating embedding {i+1}/{len(texts)}")
+            # logger.info(f"Generating embedding {i+1}/{len(texts)}")
             embedding = generate_embeddings(text, self.embedding_model)
             if embedding is not None:
                 embeddings.append(embedding)
             else:
-                # Use zero vector as fallback
-                logger.warning(f"Failed to generate embedding for document {i+1}, using zero vector")
-                embeddings.append(np.zeros(384))  # Default dimension for all-MiniLM-L6-v2
-        
+                logger.warning(f"Failed to generate embedding for document {i+1}")
+                embeddings.append(np.zeros(384)) 
         return embeddings
     
     def compute_similarity(self, embeddings: List[np.ndarray]) -> np.ndarray:
-        """
-        Compute pairwise similarity matrix from embeddings
-        
-        Args:
-            embeddings: List of embedding vectors
-            
-        Returns:
-            Similarity matrix (numpy array)
-        """
+        """Compute pairwise similarity matrix from embeddings"""
         logger.info(f"Computing similarity matrix for {len(embeddings)} embeddings")
-        
         try:
             similarity_matrix = calculate_similarity_matrix(embeddings)
-            logger.info(f"✅ Generated {similarity_matrix.shape} similarity matrix")
+            logger.info(f"✅ Generated similarity matrix")
             return similarity_matrix
         except Exception as e:
             logger.error(f"Error computing similarity matrix: {e}")
-            # Return identity matrix as fallback
             n = len(embeddings)
             return np.eye(n)
 
