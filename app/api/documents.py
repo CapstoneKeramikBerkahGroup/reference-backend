@@ -756,3 +756,85 @@ async def download_compilation_report(
             "Content-Disposition": f'attachment; filename="{filename}"'
         }
     )
+
+
+# ============= Referensi Endpoints (Mahasiswa) =============
+@router.get("/referensi/my-references")
+async def get_my_references(
+    current_mahasiswa: Mahasiswa = Depends(get_current_mahasiswa),
+    db: Session = Depends(get_db),
+    status: Optional[str] = Query(None, description="Filter by status: pending, validated, rejected"),
+    dokumen_id: Optional[int] = Query(None, description="Filter by specific document")
+):
+    """Get all references for current mahasiswa with their validation status"""
+    
+    # Base query
+    query = db.query(Referensi).join(Dokumen).filter(
+        Dokumen.mahasiswa_id == current_mahasiswa.id
+    )
+    
+    # Apply filters
+    if status:
+        query = query.filter(Referensi.status_validasi == status)
+    if dokumen_id:
+        query = query.filter(Referensi.dokumen_id == dokumen_id)
+    
+    # Get referensi with dokumen info
+    referensi_list = query.order_by(Referensi.created_at.desc()).all()
+    
+    # Format response
+    result = []
+    for ref in referensi_list:
+        result.append({
+            "id": ref.id,
+            "dokumen_id": ref.dokumen_id,
+            "dokumen_judul": ref.dokumen.judul,
+            "teks_referensi": ref.teks_referensi,
+            "penulis": ref.penulis,
+            "tahun": ref.tahun,
+            "judul_publikasi": ref.judul_publikasi,
+            "nomor": ref.nomor,
+            "status_validasi": ref.status_validasi,
+            "catatan_validasi": ref.catatan_validasi,
+            "created_at": ref.created_at,
+            "updated_at": ref.updated_at
+        })
+    
+    return {"total": len(result), "data": result}
+
+
+@router.get("/referensi/summary")
+async def get_references_summary(
+    current_mahasiswa: Mahasiswa = Depends(get_current_mahasiswa),
+    db: Session = Depends(get_db)
+):
+    """Get summary statistics of references validation status"""
+    
+    # Count by status
+    stats = db.query(
+        Referensi.status_validasi,
+        func.count(Referensi.id).label('count')
+    ).join(Dokumen).filter(
+        Dokumen.mahasiswa_id == current_mahasiswa.id
+    ).group_by(Referensi.status_validasi).all()
+    
+    # Format response
+    summary = {
+        "pending": 0,
+        "validated": 0,
+        "rejected": 0,
+        "total": 0
+    }
+    
+    for stat in stats:
+        summary[stat.status_validasi] = stat.count
+        summary["total"] += stat.count
+    
+    # Count documents with references
+    documents_with_refs = db.query(Dokumen).filter(
+        Dokumen.mahasiswa_id == current_mahasiswa.id
+    ).join(Referensi).distinct().count()
+    
+    summary["documents_with_references"] = documents_with_refs
+    
+    return summary

@@ -6,7 +6,7 @@ import os
 
 from app.core.config import settings
 from app.core.database import engine, Base
-from app.api import auth, documents, users, nlp, visualization, dosen, pembimbing
+from app.api import auth, documents, users, nlp, visualization, dosen, pembimbing, mendeley
 
 # Create uploads directory if not exists
 os.makedirs("uploads", exist_ok=True)
@@ -56,6 +56,7 @@ app.include_router(nlp.router, prefix="/api/nlp", tags=["NLP Processing"])
 app.include_router(visualization.router, prefix="/api/visualization", tags=["Visualization"])
 app.include_router(dosen.router, prefix="/api/dosen", tags=["Dosen"])
 app.include_router(pembimbing.router, prefix="/api/pembimbing", tags=["Pembimbing Requests"])
+app.include_router(mendeley.router, prefix="/api/mendeley", tags=["Mendeley Integration"])
 
 
 @app.get("/")

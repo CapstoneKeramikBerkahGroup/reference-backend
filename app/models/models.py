@@ -199,3 +199,19 @@ class DocumentSimilarity(Base):
     # Relationships
     dokumen_1 = relationship("Dokumen", foreign_keys=[dokumen_1_id], back_populates="similarities_source")
     dokumen_2 = relationship("Dokumen", foreign_keys=[dokumen_2_id], back_populates="similarities_target")
+
+
+class MendeleyToken(Base):
+    """Model untuk menyimpan Mendeley OAuth tokens"""
+    __tablename__ = "mendeley_tokens"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    mahasiswa_id = Column(Integer, ForeignKey('mahasiswa.id', ondelete='CASCADE'), nullable=False, unique=True)
+    access_token = Column(String(500), nullable=False)
+    refresh_token = Column(String(500))
+    expires_at = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Relationship
+    mahasiswa = relationship("Mahasiswa", backref="mendeley_token")

@@ -96,7 +96,7 @@ class NLPService:
     
     def extract_text_from_file(self, file_path: str) -> Optional[str]:
         """
-        Extract text from PDF or DOCX file
+        Extract text from PDF, DOCX, or TXT file
         
         Args:
             file_path: Path to the document file
@@ -108,6 +108,14 @@ class NLPService:
             return extract_text_from_pdf(file_path)
         elif file_path.lower().endswith('.docx'):
             return extract_text_from_docx(file_path)
+        elif file_path.lower().endswith('.txt'):
+            # Support for plain text files (e.g., from Mendeley import)
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    return f.read()
+            except Exception as e:
+                logger.error(f"Error reading text file {file_path}: {e}")
+                return None
         else:
             logger.error(f"Unsupported file type: {file_path}")
             return None
