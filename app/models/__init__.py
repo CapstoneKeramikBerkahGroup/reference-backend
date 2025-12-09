@@ -10,7 +10,9 @@ from app.models.models import (
     DocumentSimilarity,
     MendeleyToken,
     dokumen_tag,
-    DokumenKata
+    DokumenKata,
+    UserZotero,
+    ExternalReference
 )
 
 __all__ = [
@@ -25,5 +27,7 @@ __all__ = [
     "DocumentSimilarity",
     "MendeleyToken",
     "dokumen_tag",
-    "DokumenKata"
+    "DokumenKata",
+    "UserZotero",
+    "ExternalReference"
 ]
