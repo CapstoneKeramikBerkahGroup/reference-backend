@@ -15,11 +15,12 @@ RUN apt-get update && apt-get install -y \
     libpng16-16 \
     && rm -rf /var/lib/apt/lists/*
 
+RUN pip install --upgrade pip
+
 # Copy requirements first for better caching
 COPY requirements.txt .
 
-# Upgrade pip and increase timeout
-RUN pip install --upgrade pip
+RUN pip install --no-cache-dir --default-timeout=1000 -r requirements.txt
 
 # Install Python dependencies with increased timeout and retries
 # Split heavy packages to avoid timeout

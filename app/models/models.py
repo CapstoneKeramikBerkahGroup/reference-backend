@@ -215,3 +215,43 @@ class MendeleyToken(Base):
     
     # Relationship
     mahasiswa = relationship("Mahasiswa", backref="mendeley_token")
+
+
+class UserZotero(Base):
+    """Menyimpan akses token Zotero milik user"""
+    __tablename__ = "user_zotero"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    zotero_user_id = Column(String) # ID unik dari Zotero
+    api_key = Column(String) # Token akses
+    library_type = Column(String, default="user") # 'user' atau 'group'
+    last_sync = Column(DateTime, nullable=True)
+    
+    user = relationship("User", backref="zotero_account")
+
+
+class ExternalReference(Base):
+    """
+    Menyimpan metadata referensi dari Zotero/Mendeley.
+    PDF TIDAK disimpan di sini, tapi di-download on-demand.
+    """
+    __tablename__ = "external_references"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    source = Column(String, default="zotero") # 'zotero' or 'mendeley'
+    source_id = Column(String) # ID item di Zotero (Key)
+    
+    title = Column(String)
+    authors = Column(String) # Disimpan sebagai JSON string atau teks gabungan
+    year = Column(String)
+    abstract = Column(Text, nullable=True)
+    url = Column(String, nullable=True) # Link ke file PDF di Zotero
+    has_pdf = Column(Boolean, default=False)
+    
+    # Status sinkronisasi ke sistem AI Nalar-Net
+    is_analyzed = Column(Boolean, default=False) 
+    local_document_id = Column(Integer, ForeignKey("dokumen.id", ondelete='SET NULL'), nullable=True) # Link ke tabel Dokumen jika sudah di-analisis
+    
+    user = relationship("User", backref="external_references")

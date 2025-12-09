@@ -214,3 +214,47 @@ async def summarize_document(
         "summary": summary,
         "status": "completed"
     }
+    
+@router.post("/compare-gap")
+async def compare_documents_gap(
+    payload: dict, # Ekspektasi: {"doc_id_1": 1, "doc_id_2": 2}
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    doc1_id = payload.get("doc_id_1")
+    doc2_id = payload.get("doc_id_2")
+    
+    # Ambil dokumen dari DB
+    doc1 = db.query(Dokumen).filter(Dokumen.id == doc1_id).first()
+    doc2 = db.query(Dokumen).filter(Dokumen.id == doc2_id).first()
+    
+    if not doc1 or not doc2:
+        raise HTTPException(status_code=404, detail="One or both documents not found")
+
+    # Ekstrak teks (Cache logic bisa ditambahkan di sini agar tidak baca PDF ulang)
+    text1 = nlp_service.extract_text_from_file(doc1.path_file)
+    text2 = nlp_service.extract_text_from_file(doc2.path_file)
+    
+    if not text1 or not text2:
+         raise HTTPException(status_code=400, detail="Failed to extract text from documents")
+
+    # Analisis Gap
+    gap_analysis = await nlp_service.analyze_research_gap(text1, text2)
+    
+    # Analisis Keyword Overlap (Bonus)
+    # Kita cari keyword unik di Doc 1 yang tidak ada di Doc 2, dan sebaliknya
+    kw1 = await nlp_service.extract_keywords(text1)
+    kw2 = await nlp_service.extract_keywords(text2)
+    
+    unique_to_doc1 = list(set(kw1) - set(kw2))
+    unique_to_doc2 = list(set(kw2) - set(kw1))
+    common_keywords = list(set(kw1) & set(kw2))
+
+    return {
+        "gap_analysis": gap_analysis,
+        "keyword_comparison": {
+            "unique_to_doc1": unique_to_doc1,
+            "unique_to_doc2": unique_to_doc2,
+            "common_topics": common_keywords
+        }
+    }

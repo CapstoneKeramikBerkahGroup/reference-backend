@@ -27,11 +27,40 @@ DEVICE = -1
 DEVICE_NAME = "CPU"
 logger.info(f"💡 NLP Service running on: {DEVICE_NAME}")
 
+def fix_common_artifacts(text: str) -> str:
+    """
+    Perbaikan artefak teks, TERUTAMA Hyphenation, Ligatures, dan Page Numbers.
+    """
+    # 1. FIX LIGATURES
+    text = text.replace('ﬁ', 'fi').replace('ﬂ', 'fl').replace('ﬀ', 'ff').replace('ﬃ', 'ffi')
+
+    # 2. Hapus Nomor Halaman yang berdiri sendiri di baris baru (Artifact PDF)
+    # Menghapus baris yang isinya CUMA angka (1, 2, 3.. 10..)
+    text = re.sub(r'\n\s*\d+\s*\n', '\n', text)
+    
+    # 3. De-hyphenation lintas baris
+    text = re.sub(r'([a-zA-Z])-\s*\n\s*([a-zA-Z])', r'\1\2', text)
+    text = re.sub(r'([a-zA-Z])-\s+([a-zA-Z])', r'\1\2', text)
+
+    # 4. Fix scientific notation
+    text = re.sub(r'(\d+)\s?e\s?(\d+)', r'\1-\2', text)
+    
+    # 5. Hapus artefak CID
+    text = re.sub(r'\(cid:\d+\)', '', text)
+
+    # 6. Hapus Copyright & License Footer
+    text = re.sub(r'©\s*\d{4}\s*(?:IEEE|ACM|Springer|Elsevier)', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'Authorized licensed use limited to:.*', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'(?:ISBN|ISSN|Part Number):\s*[\d-]+\s*', '', text, flags=re.IGNORECASE)
+    
+    # 7. Fix spasi baca
+    text = re.sub(r'\s+([.,;:])', r'\1', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    
+    return text
+
 def clean_text_lines(text: str) -> str:
-    """
-    Membersihkan teks dengan memfilter baris per baris.
-    Sangat efektif membuang Header/Footer/Metadata.
-    """
+    """"Membersihkan baris sampah (Header/Footer/Metadata Jurnal)."""
     lines = text.split('\n')
     cleaned_lines = []
     
@@ -42,7 +71,9 @@ def clean_text_lines(text: str) -> str:
         r'all rights reserved', r'https?://', r'www\.',
         r'correspondence', r'email:', r'department of', 
         r'university of', r'faculty of', r'school of',
-        r'institute of', r'ph\.?d', r'm\.?d', r'm\.?sc',
+        r'institute of', r'ph\.?d', r'm\.?d', r'm\.?sc', r'frontiers', r'proceedings of',
+        r'downloaded from', r'access provided by',
+        r'ieee xplore', r'part number', r'isbn:', r'authorized licensed use'
         r'\(cid:\d+\)', # CID artifacts
         r'^\d{4}$', # Tahun doang
         r'^page \d+', # Nomor halaman
@@ -62,14 +93,12 @@ def clean_text_lines(text: str) -> str:
         if not is_trash:
             cleaned_lines.append(line_clean)
             
-    return " ".join(cleaned_lines)
+    return "\n".join(cleaned_lines)
 
 def locate_intro_or_abstract(text: str) -> str:
     """
     Mencari posisi Introduction atau Abstract untuk memulai ringkasan.
     """
-    # Coba cari Introduction dulu (Isi paling daging)
-    # Regex menangkap "1. Introduction" atau "I. Introduction" atau "Introduction"
     match_intro = re.search(r'(?:^|\n)(?:\d+\.|I\.|)\s*Introduction', text, re.IGNORECASE)
     
     if match_intro:
@@ -81,18 +110,131 @@ def locate_intro_or_abstract(text: str) -> str:
     if match_abst:
         return text[match_abst.start():]
         
-    return text # Fallback: pakai semua teks yang sudah dibersihkan
+    return text
 
-def fix_common_artifacts(text: str) -> str:
-    """Perbaikan kosmetik akhir."""
-    text = re.sub(r'(\d+)\s?e\s?(\d+)', r'\1-\2', text) # 16e18 -> 16-18
-    text = re.sub(r'\s+([.,;:])', r'\1', text) # Spasi sebelum titik
-    text = re.sub(r'([.,;:])([a-zA-Z])', r'\1 \2', text) # Spasi setelah titik
-    text = text.replace('', '')
-    text = re.sub(r'\[\d+(?:,\s*\d+)*\]', '', text) # Hapus sitasi angka [12]
-    text = text.replace('ClassiRAcation', 'Classification')
-    text = "".join(ch for ch in text if ch.isprintable() or ch in ['\n', '\t', '\r'])
-    return text.strip()
+def extract_research_gap_sections(text: str) -> Dict[str, str]:
+    """
+    Ekstraksi Limitations & Future Work dengan logika Fallback yang cerdas.
+    """
+    # Langkah 1: Bersihkan Hyphenation dulu sebelum diproses regex
+    text_clean = fix_common_artifacts(text)
+    
+    extracted = {"limitations": "", "future_work": ""}
+
+    # --- DEFINISI REGEX HEADER ---
+    # Header Prefix: Bisa diawali angka (5.), newline, atau spasi
+    h_pre = r'(?:^|\n|\.\s+)\s*(?:\d+(?:\.\d+)*\.?)?\s*'
+
+    limit_patterns = [
+        # Menangkap "Limitations", "Limitations and Challenges", "5. Limitations"
+        h_pre + r'(?:Limitations?|Weaknesses?|Keterbatasan)(?:\s+(?:and|&)\s+(?:Challenges?|Future|Directions?))?(?:\s*[:.])?\s*(?=\n|[A-Z])',
+        h_pre + r'(?:Challenges?|Issues?)(?:\s*[:.])?\s*(?=\n|[A-Z])'
+    ]
+
+    # 2. FUTURE WORK HEADERS
+    future_patterns = [
+        h_pre + r'(?:Future\s+Works?|Future\s+Research|Directions?|Suggestions?|Saran)(?:\s*[:.])?\s*(?=\n|[A-Z])'
+    ]
+
+    # 3. CONCLUSION HEADERS (Fallback)
+    conclusion_patterns = [
+        h_pre + r'(?:Conclusion|Conclusions|Concluding Remarks|Discussion|Summary|Kesimpulan)(?:\s*[:.])?\s*(?=\n|[A-Z])'
+    ]
+
+    # Stop Markers: Berhenti jika ketemu bab lain atau Referensi
+    stop_markers = [
+        r'(?:^|\n)\s*(?:\d+(?:\.\d+)*\.?)?\s*(?:References|Daftar Pustaka|Bibliography|Acknowledgement|Data Availability|Ethics|Funding|Author Contribution)',
+        r'(?:^|\n)\s*(?:\d+(?:\.\d+)*\.?)?\s*(?:Conclusion|Future Work|Limitations?)',
+        r'http[s]?://'
+    ]
+    stop_regex = "|".join(stop_markers)
+    
+    def clean_technical_sentences(raw_text, type="general"):
+        if not raw_text: return ""
+        
+        # Pecah kalimat
+        sentences = re.split(r'(?<=[.!?])\s+', raw_text)
+        cleaned_sentences = []
+        
+        # Kata-kata teknis yang HARUS DIBUANG (Noise)
+        blacklist = [
+            'hyperparameter', 'epoch', 'softmax', 'relu', 'layer', 'convolution', 
+            'training data', 'validation set', 'accuracy', 'f1 score', 'precision', 
+            'recall', 'table', 'figure', 'shown in', 'we use', 'we utilized',
+            'state-of-the-art', 'baseline', 'outperform', 'github', 'code is available'
+        ]
+        
+        # Kata-kata emas (Wajib ada/disimpan)
+        whitelist_limit = ['limit', 'lack', 'issue', 'problem', 'constraint', 'fail', 'weakness', 'scarcity', 'sparse', 'unable', 'challenge', 'difficult']
+        whitelist_future = ['future', 'intend', 'plan', 'propose', 'suggest', 'recommend', 'extend', 'explore', 'hope', 'next step']
+
+        for s in sentences:
+            s_lower = s.lower()
+            
+            # Jika kalimat terlalu pendek, skip
+            if len(s) < 20: continue
+            
+            # Cek Blacklist (Metodologi/Teknis)
+            is_technical = any(word in s_lower for word in blacklist)
+            
+            # Cek Whitelist
+            is_limit_relevant = any(word in s_lower for word in whitelist_limit)
+            is_future_relevant = any(word in s_lower for word in whitelist_future)
+            
+            # ATURAN PENYARINGAN:
+            # 1. Jika ini Future Work Section: Ambil kalimat yang mengandung unsur future.
+            # 2. Jika ini Limitation Section: Ambil kalimat yang mengandung unsur limitasi.
+            # 3. Jika kalimat mengandung blacklist TAPI juga mengandung whitelist (misal: "The accuracy is limited by..."), AMBIL.
+            # 4. Jika kalimat murni teknis (hanya blacklist), BUANG.
+            
+            keep = False
+            if type == "limit" and is_limit_relevant: keep = True
+            elif type == "future" and is_future_relevant: keep = True
+            elif type == "general":
+                if is_limit_relevant or is_future_relevant: keep = True
+            
+            # Exception: Jika ada blacklist tapi tidak ada whitelist, buang.
+            if is_technical and not (is_limit_relevant or is_future_relevant):
+                keep = False
+
+            if keep:
+                cleaned_sentences.append(s)
+
+        # Ambil maksimal 5-6 kalimat terbaik agar tidak kepanjangan
+        return " ".join(cleaned_sentences[:6])
+
+    def get_chunk(patterns, section_type, avoid_self=False):
+        for pat in patterns:
+            match = re.search(pat, text_clean, re.IGNORECASE)
+            if match:
+                start = match.end()
+                chunk = text_clean[start : start + 3500]
+                
+                # Stop marker logic
+                stop_match = re.search(stop_regex, chunk[50:], re.IGNORECASE)
+                if stop_match:
+                    chunk = chunk[:stop_match.start() + 50]
+                
+                # Filter kalimat teknis
+                return clean_technical_sentences(chunk.strip(), section_type)
+        return ""
+    
+    # --- EKSEKUSI ---
+    extracted["limitations"] = get_chunk(limit_patterns, "limit")
+    extracted["future_work"] = get_chunk(future_patterns, "future")
+    
+    # --- FALLBACK TO CONCLUSION ---
+    if not extracted["limitations"] or not extracted["future_work"]:
+        conclusion_text = get_chunk(conclusion_patterns, "general", avoid_self=True)
+        if conclusion_text:
+            # Jika Conclusion mengandung kalimat limitasi/future, masukkan
+            # Kita panggil ulang filter untuk memisahkan
+            if not extracted["limitations"]:
+                extracted["limitations"] = clean_technical_sentences(conclusion_text, "limit")
+            if not extracted["future_work"]:
+                extracted["future_work"] = clean_technical_sentences(conclusion_text, "future")
+
+    return extracted
 
 def clean_and_locate_content(text: str) -> str:
     """Membersihkan header dan mencari konten inti untuk ringkasan."""
@@ -142,16 +284,10 @@ def clean_and_locate_content(text: str) -> str:
 
 # --- Extraction ---
 def extract_text_from_pdf(file_path: str) -> Optional[str]:
-    """
-    Ekstraksi Cepat dengan PyMuPDF.
-    Membaca SELURUH halaman agar referensi di akhir terbaca.
-    """
     text = ""
     try:
         doc = fitz.open(file_path)
-        # Loop semua halaman tanpa batas (agar daftar pustaka di akhir kena)
         for page in doc:
-            # get_text() default sudah cukup baik dan sangat cepat
             text += page.get_text() + "\n"
         return text
     except Exception as e:
@@ -166,160 +302,181 @@ def extract_text_from_docx(file_path: str) -> Optional[str]:
     except Exception as e:
         logger.error(f"⚠️ Failed to process DOCX {os.path.basename(file_path)}: {e}")
         return None
+    
+def find_end_of_references(text: str) -> str:
+    """
+    Memotong teks agar berhenti TEPAT setelah Daftar Pustaka selesai.
+    Mendeteksi Appendix, Data Samples, atau Judul Bab Baru.
+    """
+    # Pola Header yang menandakan akhir dari References
+    # Kita cari pola Judul Bab yang biasanya Huruf Besar Awal atau All Caps di awal baris
+    end_markers = [
+        r'(?:^|\n)\s*(?:Appendix|APPENDICES)', 
+        r'(?:^|\n)\s*(?:A\s+|B\s+|C\s+)?(?:Data Samples|DATA SAMPLES)', # Case spesifik paper Anda
+        r'(?:^|\n)\s*(?:Supplemental|SUPPLEMENTAL)',
+        r'(?:^|\n)\s*(?:About the Author)',
+        r'(?:^|\n)\s*(?:Table \d+)', # Jika tabel besar muncul setelah referensi
+        r'(?:^|\n)\s*(?:Figure \d+)',
+    ]
+    
+    cutoff_index = len(text)
+    
+    for marker in end_markers:
+        match = re.search(marker, text) # Case-sensitive agar tidak salah tangkap kata biasa
+        if match:
+            # Ambil indeks yang paling awal ketemu
+            cutoff_index = min(cutoff_index, match.start())
+            
+    return text[:cutoff_index]
+    
+def extract_references(full_text: str) -> List[Dict[str, str]]:
+    if not full_text: return []
+    
+    # 1. Gunakan clean_text_lines agar newline terjaga
+    text_clean = clean_text_lines(full_text)
+    # 2. Hapus nomor halaman yang nyasar di tengah (1, 2, 3...)
+    text_clean = re.sub(r'\n\s*\d+\s*\n', '\n', text_clean)
+    
+    # 3. Cari Header Referensi
+    pattern = re.compile(r'(?:^|\n)\s*(\d+\.?\s*)?(REFERENCES|DAFTAR PUSTAKA|BIBLIOGRAPHY)', re.IGNORECASE)
+    match = pattern.search(text_clean)
+    
+    if not match:
+        start_search = int(len(text_clean) * 0.6)
+        match_fallback = re.search(r'(References|Daftar Pustaka)', text_clean[start_search:], re.IGNORECASE)
+        if match_fallback: 
+            text_after = text_clean[start_search + match_fallback.end():].strip()
+        else: 
+            return []
+    else:
+        text_after = text_clean[match.end():].strip()
 
+    # 4. Potong Ekor (Appendix/Data Samples)
+    text_after = find_end_of_references(text_after)
+
+    # 5. Deteksi Style: Bernomor atau Tidak?
+    sample_chunk = text_after[:1000]
+    has_brackets = re.search(r'\[\d+\]', sample_chunk)
+    has_numbered_dots = re.search(r'(?:^|\n)\s*\d+\.\s+[A-Z]', sample_chunk)
+    
+    raw_refs = []
+
+    # STYLE A: Bernomor ([1] atau 1.)
+    if has_brackets or has_numbered_dots:
+        split_pattern = r'(?=(?:^|\n)\s*(?:\[\d+\]|\d+\.\s))'
+        if has_brackets and not re.search(r'^\[\d+\]', text_after):
+            text_after = "[1] " + text_after
+        elif has_numbered_dots and not re.search(r'^\d+\.', text_after):
+             text_after = "1. " + text_after
+        
+        # Flatten newline untuk regex split
+        text_flat = re.sub(r'\n', ' ', text_after)
+        raw_refs = re.split(split_pattern, text_flat)
+
+    # STYLE B: Author-Year (Tanpa Nomor)
+    else:
+        lines = text_after.split('\n')
+        current_ref = ""
+        
+        # Regex Awal Referensi Baru (Penting!)
+        # Kriteria:
+        # 1. Dimulai Huruf Besar (Nama Belakang)
+        # 2. Diikuti koma atau " and "
+        # 3. Mengandung Tahun (19xx atau 20xx) di baris yang sama ATAU baris berikutnya
+        # 4. Panjang minimal 10 karakter
+        
+        for i, line in enumerate(lines):
+            line = line.strip()
+            if len(line) < 5: continue
+            
+            # Cek apakah ini awal referensi baru?
+            # Pola: Dimulai huruf besar, tidak diawali spasi kecil (indikasi paragraf nyambung)
+            # Dan mengandung tahun dalam kurung atau di akhir kalimat
+            is_start = False
+            
+            # Pola Nama: "Conneau, A." atau "Devlin et al."
+            starts_with_name = re.match(r'^[A-Z][a-zA-Z\-\u00C0-\u00FF]+(?:, | and | et al\.)', line)
+            has_year = re.search(r'(?:19|20)\d{2}', line)
+            
+            if starts_with_name and has_year:
+                is_start = True
+            
+            if is_start:
+                if current_ref:
+                    raw_refs.append(current_ref)
+                current_ref = line
+            else:
+                # Jika tidak terdeteksi sebagai awal, gabung ke sebelumnya
+                if current_ref:
+                    current_ref += " " + line
+                else:
+                    current_ref = line # Baris pertama banget
+        
+        if current_ref:
+            raw_refs.append(current_ref)
+
+    # 6. Formatting
+    formatted = []
+    counter = 1
+    
+    for r in raw_refs:
+        r = r.strip()
+        if len(r) < 15: continue # Filter sampah pendek
+        
+        # Hapus nomor di depan jika ada
+        r_clean = re.sub(r'^(?:\[\d+\]|\d+\.)\s*', '', r)
+        r_clean = fix_common_artifacts(r_clean)
+        
+        # Validasi Tahun (Wajib ada tahun 19xx atau 20xx untuk dianggap referensi valid)
+        if not re.search(r'(19|20)\d{2}', r_clean):
+            continue
+
+        formatted.append({"nomor": str(counter), "teks_referensi": r_clean})
+        counter += 1
+        
+    return formatted[:50]
 
 # --- NLP Functions ---
-def extract_keywords_bert(text: str, kw_model_instance: KeyBERT, top_n: int = 10, ngram_range: Tuple[int, int] = (1, 2)) -> List[str]:
+def extract_keywords_bert(text: str, kw_model_instance: KeyBERT, top_n: int = 10) -> List[str]:
     if not text or len(text.strip()) < 50: return []
     try:
-        # Bersihkan dulu sebelum ekstraksi keyword
-        clean_text = clean_text_lines(text)
-        target_text = locate_intro_or_abstract(clean_text)[:MAX_CHARS_FOR_MODEL]
-        
+        clean = clean_text_lines(text)
+        clean = fix_common_artifacts(clean)
+        target = locate_intro_or_abstract(clean)[:MAX_CHARS_FOR_MODEL]
         keywords = kw_model_instance.extract_keywords(
-            target_text,
-            keyphrase_ngram_range=ngram_range,
-            stop_words='english',
+            target, keyphrase_ngram_range=(1, 2), stop_words='english',
             use_maxsum=True, nr_candidates=20, top_n=top_n
         )
         return [kw for kw, s in keywords if len(kw) > 3 and not kw.isdigit()]
     except Exception as e:
-        logger.error(f"❌ Error KeyBERT: {e}")
+        logger.error(f"KeyBERT error: {e}")
         return []
 
-
 def generate_summary_bart(text: str, summarizer_instance) -> str:
-    """
-    Generate Summary (Optimized for Speed & Insight).
-    """
+    """Generate Summary (Optimized for Speed & Insight)."""
     if not text or len(text.strip()) < 100: return "Text too short."
-    
     try:
-        # 1. Cleaning (Line Filter)
         clean_text = clean_text_lines(text)
-        
-        # 2. Locating (Intro First)
         target_text = locate_intro_or_abstract(clean_text)
-        
-        # 3. Truncate (Biar memori aman)
         input_text = target_text[:MAX_CHARS_FOR_MODEL]
-
-        # 4. Generate (SPEED OPTIMIZED)
         summary = summarizer_instance(
-            input_text, 
-            max_length=200,
-            min_length=60,
-            # SETTINGAN KECEPATAN:
-            num_beams=1,       # Greedy Search (Paling Cepat)
-            do_sample=False,   # Deterministik (Cepat & Stabil)
-            no_repeat_ngram_size=3 # Cegah pengulangan kata
+            input_text, max_length=200, min_length=60, 
+            num_beams=1, do_sample=False, no_repeat_ngram_size=3
         )
-        final_summary = summary[0]['summary_text']
-    
+        return fix_common_artifacts(summary[0]['summary_text'])
     except Exception as e:
         logger.warning(f"⚠️ Summary failed: {e}")
         return "Failed to generate summary."
 
-    return fix_common_artifacts(final_summary)
-
-
-def extract_references(full_text: str) -> List[Dict[str, str]]:
-    """
-    Mengekstrak daftar referensi dari teks lengkap dengan deteksi [Nomor] yang kuat.
-    Menggunakan lookahead regex untuk memisahkan setiap referensi secara akurat,
-    mencegah beberapa referensi bergabung menjadi satu.
-    """
-    if not full_text:
-        return []
-
-    # 1. Normalisasi Teks
-    # Standarkan newline dan hapus newline berlebih
-    normalized_text = re.sub(r'\r\n', '\n', full_text)
-    normalized_text = re.sub(r'\n+', '\n', normalized_text)
-
-    # 2. Cari Header Referensi
-    # Pattern mencari "REFERENCES", "DAFTAR PUSTAKA", dll. di awal baris atau setelah newline
-    header_pattern = re.compile(r'(?:^|\n)\s*(\d+\.?\s*)?(REFERENCES|DAFTAR PUSTAKA|BIBLIOGRAPHY|Literature Cited)\s*(?:\n|$)', re.IGNORECASE)
-    match = header_pattern.search(normalized_text)
-    
-    text_after = ""
-    # Jika header tidak ketemu di awal baris, coba cari di 30% akhir dokumen sebagai fallback
-    if not match:
-        start_search = int(len(normalized_text) * 0.7)
-        last_part = normalized_text[start_search:]
-        # Cari kata kunci di bagian akhir tanpa harus di awal baris yang ketat
-        match_fallback = re.search(r'(References|Daftar Pustaka|Bibliography)', last_part, re.IGNORECASE)
-        if match_fallback:
-            # Ambil teks setelah header fallback ditemukan
-            text_after = last_part[match_fallback.end():].strip()
-            logger.info("⚠️ Reference header not found at start of lines, used fallback search in last 30%.")
-        else:
-            logger.warning("⚠️ No reference section header found. Cannot extract references.")
-            return []
-    else:
-        # Ambil teks setelah header ditemukan
-        text_after = normalized_text[match.end():].strip()
-
-    if not text_after:
-        logger.warning("⚠️ Reference section header found, but no text follows it.")
-        return []
-
-    # 3. Pisahkan per Referensi menggunakan Regex Lookahead (INTI PERBAIKAN)
-    # `(?=...)` adalah positive lookahead. `\[\d+\]` cocok dengan format [1], [12], dll.
-    # Regex ini akan memotong teks tepat PADA POSISI SEBELUM setiap pola `[Angka]` dimulai.
-    # Ini menjamin bahwa teks di antara dua potongan adalah satu referensi utuh.
-    split_pattern = r'(?=\[\d+\])'
-    raw_references = re.split(split_pattern, text_after)
-
-    formatted_refs = []
-    ref_counter = 1
-
-    for raw_ref in raw_references:
-        # Bersihkan whitespace di awal/akhir
-        clean_ref_text = raw_ref.strip()
-        
-        # Abaikan string kosong atau yang terlalu pendek (biasanya sampah sebelum [1])
-        if not clean_ref_text or len(clean_ref_text) < 10:
-            continue
-            
-        # Validasi: Pastikan blok ini benar-benar dimulai dengan [Nomor]
-        # Ini penting untuk memastikan kita hanya mengambil blok referensi yang valid.
-        if not re.match(r'^\[\d+\]', clean_ref_text):
-             continue
-
-        # Hapus nomor referensi asli dari teksnya agar bersih
-        # Contoh: mengubah "[14] Penulis..." menjadi "Penulis..."
-        final_ref_text = re.sub(r'^\[\d+\]\s*', '', clean_ref_text).strip()
-
-        # Gabungkan kembali baris-baris yang terputus dalam satu referensi menjadi satu baris rapi
-        final_ref_text = re.sub(r'\n', ' ', final_ref_text)
-        # Hapus spasi berlebih yang mungkin muncul akibat penggabungan baris
-        final_ref_text = re.sub(r'\s+', ' ', final_ref_text).strip()
-
-        if final_ref_text:
-            formatted_refs.append({
-                # Gunakan counter kita sendiri untuk nomor urut yang rapi di output
-                "nomor": str(ref_counter), 
-                "teks_referensi": final_ref_text
-            })
-            ref_counter += 1
-
-    logger.info(f"📚 Successfully extracted {len(formatted_refs)} references using split pattern '{split_pattern}'.")
-    # Kembalikan 50 referensi pertama (atau sesuaikan kebutuhan batas maksimum)
-    return formatted_refs[:50]
-
-
-def generate_embeddings(text: str, embedding_model_instance: SentenceTransformer) -> Optional[np.ndarray]:
+def generate_embeddings(text: str, model: SentenceTransformer) -> Optional[np.ndarray]:
     if not text or len(text.strip()) < 50: return None
     try:
-        # Bersihkan dikit biar embedding lebih akurat ke konten
-        clean_text = clean_text_lines(text)
-        target_text = locate_intro_or_abstract(clean_text)[:MAX_CHARS_FOR_MODEL]
-        return embedding_model_instance.encode(target_text, convert_to_numpy=True)
+        clean = fix_common_artifacts(text)
+        target = locate_intro_or_abstract(clean)[:MAX_CHARS_FOR_MODEL]
+        return model.encode(target, convert_to_numpy=True)
     except Exception as e:
-        logger.error(f"❌ Error Embedding: {e}")
+        logger.error(f"Embedding error: {e}")
         return None
-
 
 def calculate_similarity_matrix(embeddings: List[np.ndarray]) -> np.ndarray:
     if len(embeddings) < 2: raise ValueError("Need >1 embeddings")
