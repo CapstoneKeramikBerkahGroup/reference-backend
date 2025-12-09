@@ -21,6 +21,12 @@ RUN pip install --upgrade pip
 # Copy requirements first for better caching
 COPY requirements.txt .
 
+# Copy requirements first for better caching
+COPY requirements.txt .
+
+# Upgrade pip first
+RUN pip install --upgrade pip
+
 # Install all Python dependencies from requirements.txt
 RUN pip install --no-cache-dir --default-timeout=1000 --retries 5 -r requirements.txt
 
