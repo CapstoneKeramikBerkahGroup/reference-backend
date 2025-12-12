@@ -21,7 +21,7 @@ from .custom_nlp import (
     extract_text_from_docx,
     extract_references,
     extract_research_gap_sections,
-    fix_common_artifacts
+    fix_common_artifacts,
     detect_language,
     preprocess_indonesian_text,
 )

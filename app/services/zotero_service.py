@@ -22,11 +22,14 @@ class ZoteroService:
 
         try:
             # 2. Koneksi ke Zotero API
-            zot = zotero.Zotero(creds.zotero_user_id, creds.library_type, creds.api_key)
+            library_type = creds.library_type or 'user'
+            logger.info(f"Connecting to Zotero: user_id={creds.zotero_user_id}, library_type={library_type}")
+            zot = zotero.Zotero(creds.zotero_user_id, library_type, creds.api_key)
             
             # 3. Ambil 50 item teratas (bisa dinaikkan nanti)
             logger.info(f"Fetching items for Zotero User {creds.zotero_user_id}...")
             items = zot.top(limit=50)
+            logger.info(f"Retrieved {len(items)} items from Zotero API")
             
             synced_count = 0
             for item in items:
@@ -81,7 +84,9 @@ class ZoteroService:
 
         except Exception as e:
             logger.error(f"❌ Zotero Sync Error: {e}")
-            raise e
+            import traceback
+            traceback.print_exc()
+            raise Exception(f"Failed to sync Zotero library: {str(e)}")
     
     def process_zotero_document(self, ext_ref_id: int, db: Session, user_id: int):
         """
@@ -141,7 +146,7 @@ class ZoteroService:
         new_doc = Dokumen(
             mahasiswa_id=mahasiswa.id,
             judul=ext_ref.title,
-            nama_file=file_name,
+            nama_file=unique_filename,
             path_file=file_path,
             format="pdf",
             ukuran_kb=os.path.getsize(file_path) // 1024,

@@ -76,15 +76,13 @@ INDONESIAN_STOPWORDS = {
     'asalkan', 'biarpun', 'sambil', 'sekaligus', 'yaitu', 'yakni', 'seperti', 'merupakan',
     'terhadap', 'secara', 'maka', 'tentang', 'serta',
     
-    # Kata Umum Jurnal (Agar tidak jadi keyword sampah)
-    'menggunakan', 'penggunaan', 'digunakan', 'dilakukan', 'melakukan',
-    'hasil', 'penelitian', 'studi', 'analisis', 'metode', 'metodologi', 'data',
-    'berdasarkan', 'menunjukkan', 'kesimpulan', 'saran', 'daftar', 'pustaka',
-    'jurnal', 'volume', 'halaman', 'nomor', 'tahun', 'vol', 'no', 'pp', 'hal',
-    'et', 'al', 'etc', 'abstrak', 'pendahuluan', 'latar', 'belakang',
-    'gambar', 'tabel', 'grafik', 'lampiran', 'bab', 'penulis', 'karya',
-    'universitas', 'program', 'studi', 'fakultas', 'teknik', 'informatika',
-    'model', 'nilai', 'score', 'compound', '2020', '2021', '2022', '2023', '2024', '2025',
+    # Kata Umum Jurnal (Yang tidak informatif sebagai keyword)
+    'berdasarkan', 'menunjukkan', 'dilakukan', 'melakukan',
+    'daftar', 'pustaka', 'jurnal', 'volume', 'halaman', 'nomor', 'tahun', 
+    'vol', 'no', 'pp', 'hal', 'et', 'al', 'etc', 'abstrak', 'pendahuluan', 
+    'latar', 'belakang', 'gambar', 'tabel', 'grafik', 'lampiran', 'bab', 
+    'penulis', 'karya', 'universitas', 'program', 'fakultas',
+    '2020', '2021', '2022', '2023', '2024', '2025',
     
     # English Stopwords
     'the', 'a', 'an', 'as', 'at', 'be', 'by', 'for', 'if', 'in', 'into', 'is', 'it',
@@ -104,11 +102,35 @@ def remove_indonesian_stopwords(tokens: List[str]) -> List[str]:
     return [token for token in tokens if token.lower() not in INDONESIAN_STOPWORDS and len(token) > 2]
 
 def detect_language(text: str) -> str:
+    """
+    Deteksi bahasa Indonesia vs English dengan lebih akurat.
+    Menggunakan common words dan pattern matching.
+    """
+    if not text or len(text.strip()) < 20:
+        return 'en'  # Default to English for very short text
+    
     text_lower = text.lower()
-    id_markers = ['yang', 'dengan', 'untuk', 'dari', 'dalam', 'adalah', 'telah', 
-                  'dapat', 'tidak', 'oleh', 'ini', 'itu', 'dan', 'atau', 'pada']
-    id_count = sum(1 for marker in id_markers if f" {marker} " in text_lower)
-    return 'id' if id_count >= 5 else 'en'
+    
+    # Indonesian markers - common words yang jarang muncul di English
+    id_markers = [
+        'yang', 'dengan', 'untuk', 'dari', 'dalam', 'adalah', 'telah', 
+        'dapat', 'tidak', 'oleh', 'ini', 'itu', 'dan', 'atau', 'pada',
+        'akan', 'bisa', 'harus', 'sudah', 'belum', 'juga', 'lebih', 
+        'sangat', 'karena', 'sehingga', 'antara', 'melalui', 'terhadap',
+        'penelitian', 'hasil', 'metode', 'menggunakan', 'analisis'
+    ]
+    
+    # Count dengan word boundary yang lebih fleksibel
+    id_count = 0
+    for marker in id_markers:
+        # Match dengan word boundary atau di awal/akhir kalimat
+        import re
+        pattern = r'\b' + re.escape(marker) + r'\b'
+        if re.search(pattern, text_lower):
+            id_count += 1
+    
+    # Indonesian jika minimal 3 marker words ditemukan
+    return 'id' if id_count >= 3 else 'en'
 
 def extract_keywords_indonesian(text: str, top_n: int = 10) -> List[str]:
     """Fallback manual jika KeyBERT gagal."""
@@ -463,16 +485,6 @@ def extract_references(full_text: str) -> List[Dict[str, str]]:
         
     return formatted[:50]
 
-# --- NLP Functions ---
-def extract_keywords_bert(text: str, kw_model_instance: KeyBERT, top_n: int = 10) -> List[str]:
-    if not text or len(text.strip()) < 50: return []
-    try:
-        clean = clean_text_lines(text)
-        clean = fix_common_artifacts(clean)
-        target = locate_intro_or_abstract(clean)[:MAX_CHARS_FOR_MODEL]
-        keywords = kw_model_instance.extract_keywords(
-            target, keyphrase_ngram_range=(1, 2), stop_words='english',
-            use_maxsum=True, nr_candidates=20, top_n=top_n
 # --- NLP Core Functions ---
 
 def extract_keywords_bert(text: str, kw_model_instance: KeyBERT, top_n: int = 10, ngram_range: Tuple[int, int] = (1, 2)) -> List[str]:
