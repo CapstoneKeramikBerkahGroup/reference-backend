@@ -15,13 +15,30 @@ from sklearn.metrics.pairwise import cosine_similarity
 from collections import Counter
 from typing import List, Dict, Tuple, Optional
 import logging
+import google.generativeai as genai
+import json
+from app.core.config import settings
+
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# --Import & Config--
+try:
+    import google.generativeai as genai
+    HAS_GEMINI_LIB = True
+except ImportError:
+    HAS_GEMINI_LIB = False
+
+try:
+    from app.core.config import settings
+    GEMINI_API_KEY = getattr(settings, 'GOOGLE_API_KEY', None)
+except ImportError:
+    GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY", "")
+
 # --- Global Settings ---
-MAX_CHARS_FOR_MODEL = 3500 
+MAX_CHARS_FOR_MODEL = 12000 
 SIMILARITY_THRESHOLD = 0.50
 DEVICE = -1 
 DEVICE_NAME = "CPU"
@@ -193,6 +210,7 @@ def extract_keywords_bert(text: str, kw_model_instance: KeyBERT, top_n: int = 10
     except Exception as e:
         logger.error(f"❌ Error KeyBERT: {e}")
         return []
+<<<<<<< Updated upstream
 
 # --- SUMMARY LOGIC (ANTI-DATA V6) ---
 
@@ -217,111 +235,428 @@ def polish_english_summary(text: str) -> str:
     return text
 
 def create_extractive_summary_indonesian(text: str, num_sentences: int = 3) -> str:
+=======
+    
+def extract_key_technical_details(text: str, lang: str = 'en') -> List[str]:
+>>>>>>> Stashed changes
     """
-    [ENHANCED V6] Summary Indo 'Abstractive-Like'.
-    Filter ketat terhadap kalimat yang berisi tanggal spesifik/angka raw.
+    Ekstraksi 'Jarum dalam Jerami': Performa, Metode, dan Hasil (Positif/Negatif).
+    [FIX] Sekarang mendeteksi 'NO significant relationship' dan 'Hypothesis NOT rejected'.
     """
-    if not text or len(text.strip()) < 50: return text
+    extras = []
+    seen_metrics = set()
     
-    # 1. Cleaning Metadata
-    text = re.sub(r'Jurnal.*?(\n|$)', ' ', text, flags=re.IGNORECASE)
-    text = re.sub(r'Vol.*?(\n|$)', ' ', text, flags=re.IGNORECASE)
-    text = re.sub(r'ISSN.*?(\n|$)', ' ', text, flags=re.IGNORECASE)
-    text = re.sub(r'(Keywords|Kata Kunci):.*?(\n|$)', ' ', text, flags=re.IGNORECASE)
-    text = re.sub(r'\[\d+\]', '', text) 
-    text = re.sub(r'\([A-Za-z\s\.,]+?\d{4}\)', '', text)
-
-    # 2. Smart Split
-    text = re.sub(r'([A-Z][a-z]+)\.\s(?=[A-Z][a-z]+)', r'\1 ', text) # Fix New. York.
-    raw_sentences = re.split(r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?|\!)\s+(?=[A-Z])', text)
-    
-    sentences = []
-    
-    # 3. FILTER DATA MENTAH (Ini yang memperbaiki masalah tanggal/angka)
-    for s in raw_sentences:
-        s = s.strip()
-        if len(s.split()) < 5: continue
-        
-        # Buang jika ada tanggal spesifik (misal: "6 Juni 2024", "10 Juli")
-        if re.search(r'\d{1,2}\s+(Januari|Februari|Maret|April|Mei|Juni|Juli|Agustus|September|Oktober|November|Desember)', s, re.IGNORECASE):
-            continue
-            
-        # Buang jika banyak angka desimal/raw score (misal: "score 0.0999", "2906.57")
-        if re.search(r'\d+\.\d{2,}', s):
-            continue
-            
-        sentences.append(s)
-    
-    if len(sentences) <= num_sentences: return ' '.join(sentences)
-
-    best_sentences = {'goal': None, 'method': None, 'result': None}
-    best_scores = {'goal': 0, 'method': 0, 'result': 0}
-
-    markers = {
-        'goal': ['bertujuan', 'tujuannya', 'fokus', 'membahas', 'menganalisis', 'meneliti'],
-        'method': ['menggunakan', 'metode', 'algoritma', 'pendekatan', 'penerapan', 'melalui', 'integrasi'],
-        'result': ['hasil', 'kesimpulan', 'menunjukkan', 'terbukti', 'didapatkan', 'kontribusi', 'secara keseluruhan']
+    terms = {
+        'en': {
+            'perf': 'Performance', 'reach': 'reached', 
+            'method': 'Method', 'desc': 'This study utilizes',
+            'res': 'Key Finding', 
+        },
+        'id': {
+            'perf': 'Performa', 'reach': 'mencapai', 
+            'method': 'Metode', 'desc': 'Penelitian ini menggunakan',
+            'res': 'Temuan Utama', 
+        }
     }
+    t = terms.get(lang, terms['en'])
 
-    for sent in sentences:
-        sent_lower = sent.lower()
-        if any(x in sent_lower for x in ['keywords', 'kata kunci', 'doi:', 'pp.']): continue
-        
-        for category, keywords in markers.items():
-            score = 0
-            matches = sum(1 for k in keywords if k in sent_lower)
-            if matches > 0:
-                score += matches * 10
-                word_len = len(sent.split())
-                if 10 < word_len < 40: score += 5
-                
-                idx = sentences.index(sent)
-                if category == 'goal' and idx < len(sentences)*0.3: score += 5
-                if category == 'result' and idx > len(sentences)*0.6: score += 5
+    # --- 1. Cari Angka Performa (Sama) ---
+    metric_pattern = re.compile(r'\b(accuracy|akurasi|precision|presisi|recall|f1[- ]score|mse|rmse|auc|map)\b.{0,20}\b(\d{1,3}(?:\.\d+)?\s?%|0\.\d{2,4})', re.IGNORECASE)
+    matches_metric = metric_pattern.findall(text)
+    for m in matches_metric:
+        raw_name = m[0].lower()
+        if raw_name in seen_metrics: continue
+        seen_metrics.add(raw_name)
+        metric_name = raw_name.title()
+        if lang == 'en':
+            metric_name = metric_name.replace('Akurasi', 'Accuracy').replace('Presisi', 'Precision').replace('Auc', 'AUC')
+        else:
+            metric_name = metric_name.replace('Auc', 'AUC')
+        extras.append(f"• 📊 {t['perf']}: {metric_name} {t['reach']} {m[1]}")
 
-                if score > best_scores[category]:
-                    best_scores[category] = score
-                    best_sentences[category] = sent
-
-    final_parts = []
+    # --- 2. Cari Nama Metode (Sama) ---
+    known_models = [
+        'SVM', 'Support Vector Machine', 'Naive Bayes', 'Random Forest', 'Decision Tree',
+        'LSTM', 'CNN', 'RNN', 'BERT', 'Transformer', 'YOLO', 'ResNet', 'VGG', 
+        'K-Nearest Neighbor', 'KNN', 'Logistic Regression', 'Gradient Boosting', 'XGBoost',
+        'Prophet', 'ARIMA', 'PLS-SEM', 'SPSS', 'Chi-Square', 'Mann-Whitney' # Tambah metode statistik
+    ]
+    found_models = []
+    seen_models = set()
+    for model in known_models:
+        if re.search(r'\b' + re.escape(model) + r'\b', text, re.IGNORECASE):
+            model_key = model.upper()
+            if model_key == 'SUPPORT VECTOR MACHINE': model_key = 'SVM'
+            if model_key == 'K-NEAREST NEIGHBOR': model_key = 'KNN'
+            if model_key not in seen_models:
+                found_models.append(model)
+                seen_models.add(model_key)
     
-    # A. Goal
-    goal_sent = best_sentences['goal']
-    if not goal_sent and sentences: goal_sent = sentences[0]
-    if goal_sent:
-        goal_sent = re.sub(r'^(ABSTRAK|PENDAHULUAN|Latar Belakang)\s*', '', goal_sent, flags=re.IGNORECASE)
-        goal_sent = re.sub(r'^(Penelitian|Tulisan|Artikel|Jurnal|Paper) ini', 'Studi ini', goal_sent, flags=re.IGNORECASE)
-        if not re.match(r'^(Studi|Penelitian|Makalah)', goal_sent):
-            goal_sent = "Studi ini " + goal_sent[0].lower() + goal_sent[1:]
-        final_parts.append(goal_sent)
+    if found_models:
+        models_str = ", ".join(sorted(found_models))
+        extras.append(f"• ⚙️ {t['method']}: {t['desc']} {models_str}.")
 
-    # B. Method
-    method_sent = best_sentences['method']
-    if method_sent and method_sent != goal_sent:
-        method_sent = re.sub(r'^(Adapun|Dalam|Pada)\s*', '', method_sent, flags=re.IGNORECASE)
-        if re.match(r'^[A-Z]{3,}', method_sent): 
-            method_sent = "Metode " + method_sent
-        method_sent = method_sent[0].upper() + method_sent[1:]
-        final_parts.append(method_sent)
+    # --- 3. [FIX] Cari Pernyataan Hasil dengan Konteks Negatif ---
+    
+    # Prioritas 1: Cek Hasil NEGATIF dulu (No significant, Not rejected)
+    negative_patterns = [
+        r'(no|not|fail\w* to|did not)\s+(find\w* )?(any )?(significant|meaningful)\s+(relationship|correlation|effect|impact|influence|association)', # "no significant relationship"
+        r'(null )?hypothesis.*?not\s+(rejected|supported)', # "hypothesis was not rejected"
+        r'(no|not)\s+(significantly)\s+(influence|affect|impact)', # "did not significantly influence"
+        r'found no evidence',
+        r'tidak\s+(ada\s+)?(hubungan|pengaruh|dampak)\s+(yang\s+)?(signifikan)',
+    ]
+    
+    # Prioritas 2: Cek Hasil POSITIF (Hanya jika tidak ada negatif di kalimat yg sama)
+    positive_patterns = [
+        r'significant\s+(positive|negative)?\s*(relationship|correlation|effect|impact|influence|association)',
+        r'(positive|negative)\s+(relationship|correlation|effect|impact|influence)',
+        r'hypothesis\s+(was|is)\s+(accepted|supported)', # Hati-hati dengan "rejected" (bisa berarti hipotesis nol ditolak = ada hubungan)
+        r'null hypothesis\s+(was|is)\s+rejected', # Null ditolak = Signifikan
+        r'significantly\s+(influence|affect|impact)'
+    ]
 
-    # C. Result
-    result_sent = best_sentences['result']
-    if result_sent and result_sent != goal_sent and result_sent != method_sent:
-        result_sent = re.sub(r'^(Berdasarkan|Dari|Maka)\s*(hasil|data|penelitian|analisis|kesimpulan).*?(bahwa|maka)\s*', 'Hasil evaluasi menunjukkan bahwa ', result_sent, flags=re.IGNORECASE)
-        result_sent = re.sub(r'^Evaluasi model Prophet menunjukkan', 'Hasil evaluasi menunjukkan', result_sent, flags=re.IGNORECASE)
-        if len(result_sent) > 1:
-            result_sent = result_sent[0].upper() + result_sent[1:]
-        final_parts.append(result_sent)
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    found_result = None
+    
+    for sent in sentences:
+        sent_clean = sent.strip()
+        if len(sent_clean) < 20 or len(sent_clean) > 300: continue 
+        
+        # Cek Negatif Dulu
+        is_negative = False
+        for pat in negative_patterns:
+            if re.search(pat, sent_clean, re.IGNORECASE):
+                is_negative = True
+                # Bersihkan sitasi
+                sent_clean = re.sub(r'\[.*?\]', '', sent_clean)
+                sent_clean = re.sub(r'\(.*?\d{4}.*?\)', '', sent_clean)
+                # Ambil kalimat penuh atau bagian setelah 'that'
+                if "that " in sent_clean:
+                     parts = sent_clean.split("that ", 1)
+                     if len(parts[1]) > 20: found_result = parts[1]
+                else:
+                    found_result = sent_clean
+                break
+        
+        if is_negative and found_result: break # Prioritaskan temuan negatif/tidak adanya hubungan (biasanya ini poin utama paper tsb)
 
-    summary = ' '.join(final_parts)
-    return re.sub(r'\s+', ' ', summary).strip()
+        # Jika tidak negatif, cek positif
+        if not found_result:
+            for pat in positive_patterns:
+                if re.search(pat, sent_clean, re.IGNORECASE):
+                    # Double check: pastikan tidak ada kata "no" atau "not" tepat di depan match (jika regex lolos)
+                    # Misal: "showed no significant effect"
+                    if re.search(r'\b(no|not)\b.{0,10}' + pat, sent_clean, re.IGNORECASE):
+                        continue # Skip, ini sebenarnya negatif
+                        
+                    sent_clean = re.sub(r'\[.*?\]', '', sent_clean)
+                    sent_clean = re.sub(r'\(.*?\d{4}.*?\)', '', sent_clean)
+                    if "that " in sent_clean:
+                        parts = sent_clean.split("that ", 1)
+                        if len(parts[1]) > 20: found_result = parts[1]
+                    else:
+                        found_result = sent_clean
+                    break
+        
+        if found_result: break
 
+    if found_result:
+        found_result = found_result.strip().strip('.')
+        found_result = found_result[0].upper() + found_result[1:]
+        extras.append(f"• 📈 {t['res']}: {found_result}.")
+
+    return extras
+
+
+def generate_smart_summary_gemini(text: str, lang: str = 'id') -> Optional[str]:
+    """
+    Generate summary Deep Dive menggunakan Gemini.
+    Fitur:
+    1. Format JUDUL BESAR + Bullet Points Murni (Bukan Narasi).
+    2. Universal: Adaptif untuk Audit, Dev, atau Data Mining.
+    3. Conciseness: Poin-poin padat dan langsung pada intinya.
+    """
+    if not HAS_GEMINI_LIB or not GEMINI_API_KEY:
+        logger.warning("❌ Gemini Lib missing or API Key not set.")
+        return None
+
+    try:
+        # 1. Cleaning & Truncating
+        clean_text = clean_text_lines(text)
+        clean_text = fix_common_artifacts(clean_text)
+        
+        # Ambil konteks luas
+        head_text = clean_text[:6000]
+        mid_index = len(clean_text) // 2
+        mid_text = clean_text[mid_index : mid_index+4500] 
+        tail_text = clean_text[-4500:]
+        
+        combined_text = f"{head_text}\n...\n{mid_text}\n...\n{tail_text}"
+
+        # 2. PROMPT STRICT FORMAT (Header + Bullets)
+        base_instruction = """
+        Peran: Lead Technical Reviewer.
+        Tugas: Ekstrak "Deep Dive Summary" dari paper ini.
+        
+        ATURAN FORMAT (WAJIB PATUH):
+        1. GUNAKAN JUDUL BAGIAN (HEADER) DALAM HURUF KAPITAL.
+        2. ISI WAJIB DALAM BULLET POINTS (*). JANGAN GUNAKAN PARAGRAF NARASI.
+        3. JANGAN GUNAKAN EMOJI.
+        4. Setiap bullet point harus RINGKAS (maksimal 2 kalimat).
+        5. Deskripsikan rumus matematika dengan kata-kata sederhana.
+
+        LOGIKA ADAPTIF (SESUAIKAN DENGAN TIPE PAPER):
+        - Tipe AUDIT/TATA KELOLA (COBIT/ITIL): Fokus pada Domain Audit, Gap Analysis, dan Level Kapabilitas.
+        - Tipe PENGEMBANGAN SISTEM: Fokus pada Stack Teknologi, Metode SDLC, dan Hasil Testing (UAT/Blackbox).
+        - Tipe DATA/AI: Fokus pada Dataset, Preprocessing, Algoritma, dan Metrik Evaluasi.
+
+        FORMAT OUTPUT YANG DIHARAPKAN:
+
+        [English]
+        ### CONTEXT & RESEARCH GAP
+        * [Point 1: Specific problem or gap being addressed]
+        * [Point 2: Why current solutions are insufficient]
+
+        ### TECHNICAL IMPLEMENTATION
+        * [Point 1: Core method/algorithm/framework used]
+        * [Point 2: Specific tools, dataset size, or audit domains]
+        * [Point 3: How the process works (step-by-step logic)]
+
+        ### CRITICAL FINDINGS & INSIGHTS
+        * [Point 1: Main result (accuracy numbers, capability levels, etc.)]
+        * [Point 2: Anomalies, limitations, or user feedback found]
+
+        [Indonesia]
+        ### KONTEKS & MASALAH
+        * [Poin 1: Masalah spesifik atau gap penelitian]
+        * [Poin 2: Mengapa solusi yang ada belum cukup]
+
+        ### IMPLEMENTASI TEKNIS
+        * [Poin 1: Metode/Algoritma/Framework inti yang digunakan]
+        * [Poin 2: Tools spesifik, ukuran dataset, atau domain audit]
+        * [Poin 3: Logika cara kerja (jelaskan rumus secara deskriptif)]
+
+        ### TEMUAN KRITIS & INSIGHT
+        * [Poin 1: Hasil utama (angka akurasi, level kapabilitas, dll)]
+        * [Poin 2: Temuan unik, anomali, atau limitasi yang diakui]
+        """
+
+        # 3. Eksekusi Request
+        genai.configure(api_key=GEMINI_API_KEY)
+        models_to_try = [            
+            'gemini-pro-latest',          
+            'gemini-3-flash-preview',     
+            'gemini-pro' 
+        ]
+        
+        for model_name in models_to_try:
+            try:
+                real_model_name = model_name.replace("models/", "")
+                logger.info(f"⏳ Summarizing with {real_model_name}...")
+                model = genai.GenerativeModel(real_model_name)
+                
+                final_prompt = f"{base_instruction}\n\nTEKS DOKUMEN:\n{combined_text}"
+                
+                response = model.generate_content(final_prompt)
+                result = response.text.strip()
+                
+                # Bersihkan markdown bold (**teks**) agar lebih bersih
+                result = result.replace('**', '')
+                
+                if result and len(result) > 50:
+                    logger.info(f"✅ Deep Summary generated with {real_model_name}")
+                    return result
+            except Exception as e:
+                logger.warning(f"⚠️ Model {model_name} failed: {e}")
+                continue
+        
+        return None
+
+    except Exception as e:
+        logger.error(f"❌ Error in Gemini Summary: {e}")
+        return None
+        
 def generate_summary_bart(text: str, summarizer_instance) -> str:
-    """Hybrid Summary: Indo (Enhanced), Eng (BART + Polish)."""
+    """
+    Hybrid Summary: 
+    1. Try Gemini (High Accuracy & Perfect Formatting).
+    2. Fallback to BART + Regex Extraction (Offline mode).
+    """
     if not text or len(text.strip()) < 100: return "Text too short."
+    
+    # --- 1. PRIORITY: GEMINI API ---
+    gemini_result = generate_smart_summary_gemini(text, lang='en')
+    if gemini_result:
+        return gemini_result
+    
+    # --- 2. FALLBACK: LOCAL BART + REGEX ---
+    logger.info("🔄 Using Fallback BART Summary for English...")
     try:
         clean_text = clean_text_lines(text)
         target_text = locate_intro_or_abstract(clean_text)
+<<<<<<< Updated upstream
+=======
+        input_text = target_text[:MAX_CHARS_FOR_MODEL]
+        
+        # Generate Summary by AI
+        summary = summarizer_instance(
+            input_text, max_length=200, min_length=60, 
+            num_beams=1, do_sample=False, no_repeat_ngram_size=3
+        )
+        raw_summary = summary[0]['summary_text']
+        
+        # Format Bullet Points
+        polished_summary = polish_english_summary(raw_summary)
+        
+        # Extract Technical Details (Manual Regex)
+        technical_bullets = extract_key_technical_details(target_text, lang='en')
+        
+        if technical_bullets:
+            polished_summary += "\n" + "\n".join(technical_bullets)
+            
+        return polished_summary
+        
+    except Exception as e:
+        logger.warning(f"⚠️ BART Summary failed: {e}")
+        return "Failed to generate summary."
+    
+def translate_summary_to_indonesian(english_summary: str) -> str:
+    """
+    Translate English summary to Indonesian using Helsinki-NLP neural translation model.
+    Automatically handles ANY English terms without requiring manual dictionary updates.
+    
+    Falls back to dictionary-based translation if model unavailable.
+    """
+    if not english_summary:
+        return ""
+    
+    try:
+        # Try to use neural translation model (automatic, comprehensive)
+        return _translate_with_neural_model(english_summary)
+    except Exception as e:
+        logger.warning(f"Neural translation failed ({e}), falling back to dictionary...")
+        # Fallback to dictionary if model fails
+        return _translate_with_dictionary(english_summary)
+
+
+def _translate_with_neural_model(english_summary: str) -> str:
+    try:
+        from transformers import pipeline
+        translator = pipeline(
+            'translation_en_to_id',
+            model='Helsinki-NLP/opus-mt-en-id',
+            device=-1
+        )
+
+        # merge broken bullets
+        raw_lines = english_summary.split('\n')
+        merged_lines, current = [], ""
+
+        for line in raw_lines:
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith("•"):
+                if current:
+                    merged_lines.append(current.strip())
+                current = line
+            else:
+                current += " " + line
+        if current:
+            merged_lines.append(current.strip())
+
+        translated_bullets = []
+
+        for line in merged_lines:
+            # ===== STEP 0: CLEAN DASAR =====
+            clean_input = re.sub(r'^[•\-\*]\s*', '', line)
+            clean_input = re.sub(r'\s+', ' ', clean_input).strip()
+            if len(clean_input) < 3:
+                continue
+
+            # ===== STEP 1: NORMALISASI LABEL (DI SINI!) =====
+            label_fixes = {
+                r'^📈\s*Key Finding[:\s]*': 'Key Finding: ',
+                r'^📊\s*Performance[:\s]*': 'Performance: ',
+                r'^⚙️\s*Method[:\s]*': 'Method: '
+            }
+            for p, rpl in label_fixes.items():
+                clean_input = re.sub(p, rpl, clean_input, flags=re.IGNORECASE)
+
+            # ===== PROTEKSI METODE =====
+            if 'Method: This study utilizes' in clean_input:
+                parts = clean_input.split('utilizes')
+                if len(parts) > 1:
+                    translated_bullets.append(
+                        f"• ⚙️ Metode: Penelitian ini menggunakan {parts[1].strip()}"
+                    )
+                    continue
+
+            try:
+                # ===== TRANSLATE =====
+                res = translator(clean_input, max_length=512)[0]['translation_text']
+
+                # ===== STEP 2: FIX LABEL & AKADEMIK =====
+                res = re.sub(r'^Key Finding[:\s]*', '📈 Temuan Utama: ', res, flags=re.IGNORECASE)
+                res = re.sub(r'^Performance[:\s]*', '📊 Kinerja: ', res, flags=re.IGNORECASE)
+                res = re.sub(r'^Method[:\s]*', '⚙️ Metode: ', res, flags=re.IGNORECASE)
+
+                academic_fixes = {
+                    r'Penampilan': 'Kinerja',
+                    r'kesempatan politik': 'dinamika politik',
+                    r'menerapkan jam': 'menggunakan analisis per jam',
+                    r'prakiraan': 'prediksi'
+                }
+                for p, rpl in academic_fixes.items():
+                    res = re.sub(p, rpl, res, flags=re.IGNORECASE)
+
+                res = res.replace('\n', ' ')
+                res = re.sub(r'\s+', ' ', res).strip()
+                res = res[0].upper() + res[1:]
+
+                translated_bullets.append(f"• {res}")
+
+            except Exception as e:
+                logger.warning(f"Translation skip: {e}")
+                translated_bullets.append(f"• {clean_input}")
+
+        return '\n'.join(translated_bullets)
+
+    except Exception as e:
+        logger.error(f"Neural translation error: {e}")
+        return _translate_with_dictionary(english_summary)
+
+def _translate_with_dictionary(english_summary: str) -> str:
+    """
+    Fallback: Emergency-only translation using minimal dictionary.
+    Only used if neural model fails. Neural model should handle 99% of cases.
+    """
+    if not english_summary:
+        return ""
+    
+    # Minimal fallback - only critical terms for emergency use
+    minimal_dict = {
+        'research': 'penelitian', 'study': 'studi', 'analysis': 'analisis',
+        'result': 'hasil', 'method': 'metode', 'conclusion': 'kesimpulan',
+        'data': 'data', 'model': 'model', 'system': 'sistem',
+        'important': 'penting', 'significant': 'signifikan', 'presented': 'disajikan',
+    }
+    
+    result = english_summary
+    for eng, indo in minimal_dict.items():
+        pattern = r'\b' + re.escape(eng) + r'\b'
+        result = re.sub(pattern, indo, result, flags=re.IGNORECASE)
+    
+    return result
+
+def generate_embeddings(text: str, model: SentenceTransformer) -> Optional[np.ndarray]:
+    if not text or len(text.strip()) < 50: return None
+    try:
+        clean = fix_common_artifacts(text)
+        target = locate_intro_or_abstract(clean)[:MAX_CHARS_FOR_MODEL]
+        return model.encode(target, convert_to_numpy=True)
+>>>>>>> Stashed changes
         lang = detect_language(target_text)
         
         if lang == 'id':
@@ -344,7 +679,7 @@ def generate_summary_bart(text: str, summarizer_instance) -> str:
     return fix_common_artifacts(final_summary)
 
 def extract_references(full_text: str) -> List[Dict[str, str]]:
-    """[FIXED] Nuclear Reference Splitter."""
+    """[FIXED] Nuclear Reference Splitter - Enhanced untuk English References."""
     if not full_text: return []
 
     normalized_text = re.sub(r'\r\n', '\n', full_text)
@@ -370,8 +705,52 @@ def extract_references(full_text: str) -> List[Dict[str, str]]:
 
     is_blob = len(text_after) > 500 and text_after.count('\n') < 5
     if is_blob:
-        blob_fix = re.sub(r'(\(\d{4}[a-z]?\))', r'\1\n', text_after)
-        blob_fix = re.sub(r'(\[\d+\])', r'\n\1', blob_fix)
+        # AGGRESSIVE Blob Splitting - Multiple strategies to find reference boundaries
+        blob_fix = text_after
+        
+        # STRATEGY 1: Split sebelum pola "Author, Initial" yang jelas
+        # Contoh: "...Workshops. Alexander P, Ilya R"
+        # Pola: ". " atau ") " diikuti Capital Letter, Capital Letter pattern
+        blob_fix = re.sub(
+            r'([.)\],])\s+(?=[A-Z][a-z\-]*(?:\s+[A-Z][a-z\-]*)*\s+[A-Z])',
+            r'\1\n',
+            blob_fix
+        )
+        
+        # STRATEGY 2: Split sebelum "et al"
+        blob_fix = re.sub(
+            r'(?<!\w)\s+([A-Z][a-z\-]+\s+et\s+al\.)',
+            r'\n\1',
+            blob_fix
+        )
+        
+        # STRATEGY 3: Split setelah year pattern ketika diikuti author baru
+        # Contoh: "2021. Mehta et al." atau "2020. Barot V"
+        blob_fix = re.sub(
+            r'(\d{4}[a-z]?[,.\)]\s*)(?=[A-Z][a-z\-]*\s+[A-Z][a-z\-]*)',
+            r'\1\n',
+            blob_fix
+        )
+        
+        # STRATEGY 4: Split setelah metadata (DOI, ISBN, page numbers)
+        # Contoh: "10.3390/s20205780. Mehta et al"
+        blob_fix = re.sub(
+            r'(DOI\s+[\d.\/]+|ISBN[\d\-]*|pp\.\s*[\d\-]+)\s+(?=[A-Z])',
+            r'\1\n',
+            blob_fix
+        )
+        
+        # STRATEGY 5: Split sebelum bracketed references
+        blob_fix = re.sub(r'(?<!\n)\s*(\[\d+\])', r'\n\1', blob_fix)
+        
+        # STRATEGY 6: Split setelah closing bracket/paren ketika diikuti author
+        # Contoh: "...imaging. Sensors 20(20):5780. Mehta et al"
+        blob_fix = re.sub(
+            r'(:\d+)\s+(?=[A-Z][a-z\-]+\s+[A-Z])',
+            r'\1\n',
+            blob_fix
+        )
+        
         lines = blob_fix.split('\n')
         
         initial_refs = []
@@ -379,12 +758,47 @@ def extract_references(full_text: str) -> List[Dict[str, str]]:
         for line in lines:
             line = line.strip()
             if not line: continue
-            if re.match(r'^[A-Z][a-z]+', line) and len(buffer) > 20:
+            
+            # Deteksi awal referensi baru dengan MULTIPLE dan AGGRESSIVE patterns
+            is_new_ref = False
+            
+            # Pattern 1: [n] bracket style
+            if re.match(r'^\[\s*\d+\s*\]', line):
+                is_new_ref = True
+            # Pattern 2: "1. Author..." numbered style
+            elif re.match(r'^\d+\.\s+[A-Z]', line):
+                is_new_ref = True
+            # Pattern 3: "Smith, J." - Author, Initial style
+            elif re.match(r'^[A-Z][a-z\-]+,\s*[A-Z]\.', line):
+                is_new_ref = True
+            # Pattern 4: "Smith et al." - et al style
+            elif re.match(r'^[A-Z][a-z\-]+\s+et\s+al\.', line):
+                is_new_ref = True
+            # Pattern 5: "Smith and Jones" atau "Smith, J. and Jones, A."
+            elif re.match(r'^[A-Z][a-z\-]+(?:\s+(?:and|&|\,))', line):
+                is_new_ref = True
+            # Pattern 6: Multiple authors "FirstName LastName, FirstName LastName"
+            elif re.match(r'^[A-Z][a-z\-]+\s+[A-Z][a-z\-]+\s+[A-Z]', line):
+                is_new_ref = True
+            # Pattern 7: Year at start (dari split strategy)
+            elif re.match(r'^\d{4}[a-z]?[,.\):]', line):
+                is_new_ref = True
+            else:
+                # Default: jika buffer kosong dan line ok, treat sebagai start baru
+                if not buffer:
+                    is_new_ref = True
+            
+            if is_new_ref and len(buffer) > 15:
                 initial_refs.append({"nomor": None, "teks_referensi": buffer.strip()})
                 buffer = line
             else:
-                buffer += " " + line
-        if buffer: initial_refs.append({"nomor": None, "teks_referensi": buffer.strip()})
+                if buffer:
+                    buffer += " " + line
+                else:
+                    buffer = line
+                    
+        if buffer and len(buffer) > 15:
+            initial_refs.append({"nomor": None, "teks_referensi": buffer.strip()})
         
         return [{"nomor": str(i+1), "teks_referensi": r['teks_referensi']} for i, r in enumerate(initial_refs[:50])]
 
@@ -470,6 +884,136 @@ def build_graph_data(filenames: List[str], similarity_matrix: np.ndarray, thresh
             if similarity_score > threshold:
                 edges.append({"from": fname_i, "to": fname_j, "value": float(similarity_score), "title": f"Similarity: {similarity_score:.3f}"})
     return {"nodes": nodes, "edges": edges}
+
+def generate_thesis_outline(title: str) -> Dict[str, List[Dict[str, str]]]:
+    """
+    Menghasilkan Kerangka Skripsi.
+    Strategi: Gunakan model yang TERSEDIA di akun user (gemini-pro-latest).
+    """
+    if not title: return {}
+
+    available_models = [
+        'gemini-pro-latest',          
+        'gemini-3-flash-preview',     
+        'gemini-pro'                  
+    ]
+
+    if HAS_GEMINI_LIB and GEMINI_API_KEY:
+        genai.configure(api_key=GEMINI_API_KEY)
+        
+        for model_name in available_models:
+            try:
+                clean_model_name = model_name.replace("models/", "")
+                logger.info(f"⏳ Mencoba generate outline dengan model: {clean_model_name}...")
+                
+                model = genai.GenerativeModel(clean_model_name)
+                
+                # --- PROMPT DISESUAIKAN DENGAN REQUEST USER ---
+                prompt = f"""
+                Berperanlah sebagai Dosen Pembimbing Tugas Akhir Program Studi Sistem Informasi/Informatika.
+                
+                Tugas: Buatkan Kerangka Tugas Akhir (Bab 1-3) yang SANGAT SPESIFIK untuk judul: "{title}".
+                
+                ATURAN KHUSUS BAB 2 (TINJAUAN PUSTAKA):
+                1. Pecah teori menjadi sub-bab terpisah (JANGAN digabung, misal "2.1 NLP & Text Mining" itu SALAH. Harusnya "2.1 NLP", "2.2 Text Mining").
+                2. Urutkan dari Teori Paling Umum (Grand Theory) ke Teori Paling Khusus (Applied Theory/Metode Spesifik).
+                3. Sub-bab TERAKHIR di Bab 2 WAJIB berisi "Penelitian Terdahulu (State of the Art)".
+                
+                STRUKTUR YANG DIHARAPKAN:
+                
+                BAB 1: PENDAHULUAN
+                1.1 Latar Belakang: Masalah, Data/Gap, Urgensi.
+                1.2 Rumusan Masalah: Pertanyaan penelitian.
+                1.3 Tujuan Penelitian.
+                1.4 Batasan Penelitian: Lingkup dan batasan.
+                1.5 Manfaat Penelitian.
+                1.6 Sistematika Penulisan.
+
+                BAB 2: TINJAUAN PUSTAKA
+                2.1 [Teori Paling Dasar/Umum yang relevan dengan judul]
+                2.2 [Teori Menengah/Variabel Utama]
+                2.3 [Teori Spesifik/Metode/Algoritma]
+                ... (Tambahkan sub-bab sesuai kebutuhan teori) ...
+                2.X Penelitian Terdahulu (State of the Art) <- WAJIB DI AKHIR BAB 2
+
+                BAB 3: METODE PENYELESAIAN MASALAH
+                3.1 Metode Penelitian: Alasan pemilihan metode.
+                3.2 Sistematika Penyelesaian Masalah: Langkah-langkah/Flowchart.
+                3.3 Metode Pengumpulan & Pengolahan Data.
+                3.4 Metode Evaluasi: Cara ukur keberhasilan.
+
+                OUTPUT HARUS FORMAT JSON MURNI (Tanpa Markdown):
+                {{
+                    "BAB 1: Pendahuluan": [
+                        {{"sub": "1.1 Latar Belakang", "guide": "..."}},
+                        {{"sub": "1.2 Rumusan Masalah", "guide": "..."}},
+                        {{"sub": "1.3 Tujuan Penelitian", "guide": "..."}},
+                        {{"sub": "1.4 Batasan Penelitian", "guide": "..."}},
+                        {{"sub": "1.5 Manfaat Penelitian", "guide": "..."}},
+                        {{"sub": "1.6 Sistematika Penulisan", "guide": "..."}}
+                    ],
+                    "BAB 2: Tinjauan Pustaka": [
+                        {{"sub": "2.1 [Nama Teori Umum]", "guide": "Jelaskan konsep dasar..."}},
+                        {{"sub": "2.2 [Nama Teori Lanjutan]", "guide": "Jelaskan kaitan dengan objek..."}},
+                        {{"sub": "2.3 [Nama Algoritma/Metode]", "guide": "Jelaskan cara kerja teknis..."}},
+                        {{"sub": "2.4 Penelitian Terdahulu (State of The Art)", "guide": "Bandingkan dengan penelitian sejenis..."}}
+                    ],
+                    "BAB 3: Metode Penyelesaian Masalah": [
+                        {{"sub": "3.1 Metode Penelitian", "guide": "..."}},
+                        {{"sub": "3.2 Sistematika Penyelesaian Masalah", "guide": "..."}},
+                        {{"sub": "3.3 Metode Pengumpulan & Pengolahan Data", "guide": "..."}},
+                        {{"sub": "3.4 Metode Evaluasi", "guide": "..."}}
+                    ]
+                }}
+                """
+                
+                response = model.generate_content(prompt)
+                clean_json = response.text.replace("```json", "").replace("```", "").strip()
+                result = json.loads(clean_json)
+                
+                logger.info(f"✅ Outline berhasil dibuat dengan {clean_model_name}!")
+                return result
+
+            except Exception as e:
+                logger.warning(f"⚠️ Gagal dengan {model_name}: {e}. Mencoba model berikutnya...")
+                continue
+    
+    # --- FALLBACK MANUAL ---
+    logger.warning("❌ Semua AI gagal. Menggunakan template manual.")
+    
+    title_lower = title.lower()
+    # Deteksi teori kasar untuk fallback
+    teori_umum = "Teori Sistem Informasi"
+    teori_khusus = "Metode Pengembangan"
+    
+    if "sistem pakar" in title_lower: 
+        teori_umum = "Kecerdasan Buatan"
+        teori_khusus = "Sistem Pakar"
+    elif "data mining" in title_lower:
+        teori_umum = "Knowledge Discovery in Database (KDD)"
+        teori_khusus = "Data Mining"
+
+    return {
+        "BAB 1: Pendahuluan": [
+            {"sub": "1.1 Latar Belakang", "guide": "Deskripsikan gap masalah."},
+            {"sub": "1.2 Rumusan Masalah", "guide": "Pertanyaan penelitian."},
+            {"sub": "1.3 Tujuan Penelitian", "guide": "Sasaran penelitian."},
+            {"sub": "1.4 Batasan Penelitian", "guide": "Ruang lingkup."},
+            {"sub": "1.5 Manfaat Penelitian", "guide": "Kontribusi."},
+            {"sub": "1.6 Sistematika Penulisan", "guide": "Ringkasan bab."}
+        ],
+        "BAB 2: Tinjauan Pustaka": [
+            {"sub": f"2.1 {teori_umum}", "guide": "Teori grand/dasar."},
+            {"sub": f"2.2 {teori_khusus}", "guide": "Teori spesifik topik."},
+            {"sub": "2.3 Penelitian Terdahulu", "guide": "State of the art."}
+        ],
+        "BAB 3: Metode Penyelesaian Masalah": [
+            {"sub": "3.1 Metode Penelitian", "guide": "Justifikasi metode."},
+            {"sub": "3.2 Sistematika Penyelesaian Masalah", "guide": "Tahapan sistematis."},
+            {"sub": "3.3 Metode Pengumpulan & Pengolahan Data", "guide": "Sumber data & teknik."},
+            {"sub": "3.4 Metode Evaluasi", "guide": "Metrik pengukuran."}
+        ]
+    }
 
 # --- Init Functions ---
 def initialize_keybert_model(): 

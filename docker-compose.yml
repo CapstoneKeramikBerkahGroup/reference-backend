@@ -47,10 +47,13 @@ services:
       - MENDELEY_CLIENT_SECRET=${MENDELEY_CLIENT_SECRET}
       - MENDELEY_REDIRECT_URI=${MENDELEY_REDIRECT_URI:-http://localhost:8000/api/mendeley/oauth/callback}
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:5173}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
     volumes:
       - ./app:/app/app
       - ./uploads:/app/uploads
       - ./logs:/app/logs
+      - ./alembic.ini:/app/alembic.ini
+      - ./alembic:/app/alembic
     depends_on:
       - db
       - redis
