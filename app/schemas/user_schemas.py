@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional, List
+from typing import Optional, List, Any
 from datetime import datetime
 
 
@@ -18,13 +18,43 @@ class UserLogin(BaseModel):
     email: EmailStr
     password: str
 
-
-class UserResponse(UserBase):
+class DosenPembimbingInfo(BaseModel):
     id: int
-    is_active: bool
-    created_at: datetime
-    bidang_keahlian: Optional[str] = None  # From mahasiswa or dosen profile
+    nip: Optional[str] = None
+    # Kita butuh nama dosen, tapi nama ada di tabel User, bukan Dosen
+    # Jadi kita perlu trik di Backend atau cukup ID dulu
+    # Jika Anda punya relasi dosen.user, kita bisa ambil namanya
+    # Untuk amannya, kita ambil ID dulu, frontend bisa cari nama dari endpoint dosen
     
+    class Config:
+        from_attributes = True
+
+# 2. Schema Profil Mahasiswa (Nested)
+class MahasiswaProfileInfo(BaseModel):
+    id: int
+    nim: str
+    program_studi: Optional[str] = None
+    # Ini kuncinya: Field nested untuk dosen pembimbing
+    dosen_pembimbing: Optional[DosenPembimbingInfo] = None 
+    dosen_pembimbing_id: Optional[int] = None
+
+    class Config:
+        from_attributes = True
+
+class UserResponse(BaseModel):
+    id: int
+    email: EmailStr
+    nama: str
+    role: str
+    is_active: bool
+    bidang_keahlian: Optional[str] = None
+    
+    # TAMBAHKAN INI AGAR DATA MAHASISWA TIDAK HILANG
+    mahasiswa_profile: Optional[MahasiswaProfileInfo] = None
+    
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
     class Config:
         from_attributes = True
 

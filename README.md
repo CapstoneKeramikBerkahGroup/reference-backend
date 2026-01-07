@@ -1,44 +1,23 @@
 # Reference Management System - Backend API
 
-Sistem pengelolaan dan analisis hubungan antar referensi ilmiah menggunakan FastAPI, PostgreSQL, dan NLP dengan dukungan integrasi Mendeley dan Zotero.
+Sistem pengelolaan dan analisis hubungan antar referensi ilmiah menggunakan FastAPI, PostgreSQL, dan NLP.
 
 ## 🚀 Features
 
 - ✅ **Authentication & Authorization** (JWT-based)
   - Registrasi & login untuk Mahasiswa dan Dosen
   - Role-based access control
-  - Profile management dengan bidang keahlian
   
 - 📄 **Document Management**
   - Upload dokumen (PDF, DOCX)
-  - Multi-source support (Manual Upload, Mendeley, Zotero)
   - Download & delete dokumen
   - Tag management
-  - Advanced search and filtering
-  
-- 🔗 **Integration Services**
-  - **Mendeley Integration** - OAuth2 authentication, library sync
-  - **Zotero Integration** - API key authentication, automatic import
-  - Token persistence and refresh handling
-  - Duplicate prevention across sources
+  - Search documents
   
 - 🤖 **NLP Processing**
-  - Indonesian language support with custom NLP
-  - Automatic keyword extraction (lightweight)
-  - Extractive text summarization
-  - Reference extraction and validation
-  - Research gap analysis
-  
-- 👥 **Pembimbingan System**
-  - Request pembimbing workflow
-  - Dosen-mahasiswa relationship management
-  - Request approval/rejection with notes
-  
-- 📊 **Reference Management**
-  - Automatic reference detection from documents
-  - Reference validation by dosen
-  - Status tracking (pending/validated/rejected)
-  - Notes and feedback system
+  - Automatic keyword extraction
+  - Text summarization
+  - Reference extraction
   
 - 🕸️ **Visualization**
   - Document similarity graph
@@ -49,12 +28,9 @@ Sistem pengelolaan dan analisis hubungan antar referensi ilmiah menggunakan Fast
 - **Framework**: FastAPI 0.109.0
 - **Database**: PostgreSQL 15
 - **Cache**: Redis 7
-- **NLP**: Custom Indonesian NLP, spaCy, Sentence Transformers
+- **NLP**: spaCy, Hugging Face Transformers, Sentence Transformers
 - **Authentication**: JWT (python-jose)
 - **ORM**: SQLAlchemy 2.0
-- **Integrations**: Mendeley API (OAuth2), Zotero API
-- **Email**: SMTP (MailHog for development)
-- **File Processing**: PyPDF2, python-docx
 
 ## 📦 Installation
 
@@ -301,31 +277,23 @@ Authorization: Bearer {token}
 
 ## 🗄️ Database Schema
 
-### Main Tables
-- `users` - User accounts (email, password, role)
-- `mahasiswa` - Student profiles (NIM, program, angkatan, bidang_keahlian)
-- `dosen` - Lecturer profiles (NIP, departemen, bidang_keahlian, max_bimbingan)
-- `dokumen` - Documents/references (judul, file_path, source: manual/mendeley/zotero)
+### Tables
+- `users` - User accounts
+- `mahasiswa` - Student profiles
+- `dosen` - Lecturer profiles
+- `dokumen` - Documents/references
 - `tag` - Document tags
-- `kata_kunci` - Keywords extracted from documents
-- `referensi` - References with validation status
-- `catatan` - Lecturer validation notes
-- `document_similarity` - Similarity scores between documents
-- `pembimbing_request` - Guidance requests (status, messages)
-- `pembimbing_mahasiswa` - Active guidance relationships
+- `kata_kunci` - Keywords
+- `referensi` - References
+- `catatan` - Lecturer notes
+- `document_similarity` - Similarity scores
 
-### Integration Tables
-- `mendeley_tokens` - Mendeley OAuth tokens (access_token, refresh_token, expires_at)
-- `zotero_config` - Zotero API configuration (user_id, api_key)
-
-### Key Relationships
+### Relationships
 - User → Mahasiswa/Dosen (1:1)
 - Mahasiswa → Dokumen (1:N)
-- Mahasiswa ↔ Dosen via pembimbing_request & pembimbing_mahasiswa
 - Dokumen ↔ Tag (N:M)
 - Dokumen ↔ KataKunci (N:M)
 - Dokumen → Referensi (1:N)
-- Referensi → Catatan (1:N)
 
 ## 🧪 Testing
 
@@ -355,10 +323,6 @@ Edit `.env` file:
 POSTGRES_USER=admin
 POSTGRES_PASSWORD=admin123
 POSTGRES_DB=reference_system
-DATABASE_URL=postgresql://admin:admin123@localhost:5432/reference_system
-
-# Redis
-REDIS_URL=redis://localhost:6379/0
 
 # JWT
 SECRET_KEY=your-secret-key-here
@@ -368,24 +332,10 @@ ACCESS_TOKEN_EXPIRE_MINUTES=30
 # File Upload
 MAX_FILE_SIZE_MB=10
 ALLOWED_EXTENSIONS=pdf,docx
-UPLOAD_DIR=uploads
 
-# Integration APIs
-MENDELEY_CLIENT_ID=your-mendeley-client-id
-MENDELEY_CLIENT_SECRET=your-mendeley-client-secret
-MENDELEY_REDIRECT_URI=http://localhost:3000/dashboard
-
-# Email (Development with MailHog)
-SMTP_HOST=localhost
-SMTP_PORT=1025
-SMTP_USERNAME=
-SMTP_PASSWORD=
-SMTP_FROM_EMAIL=noreply@refmanager.com
-
-# NLP Settings
-USE_LIGHTWEIGHT_NLP=true
-KEYWORD_EXTRACTION_TOP_K=10
-SUMMARY_SENTENCES=3
+# NLP Models
+SUMMARIZATION_MODEL=facebook/bart-large-cnn
+KEYWORD_EXTRACTION_MODEL=all-MiniLM-L6-v2
 ```
 
 ## 📁 Project Structure
@@ -393,39 +343,30 @@ SUMMARY_SENTENCES=3
 ```
 backend/
 ├── app/
-│   ├── api/              # API endpoints
-│   │   ├── auth.py       # Authentication endpoints
-│   │   ├── documents.py  # Document management
-│   │   ├── nlp.py        # NLP processing
-│   │   ├── users.py      # User management
-│   │   ├── dosen.py      # Dosen-specific endpoints
-│   │   ├── pembimbing.py # Guidance system
-│   │   ├── integration.py # Mendeley/Zotero integration
-│   │   ├── mendeley.py   # Mendeley OAuth callbacks
-│   │   └── visualization.py # Graph data
-│   ├── core/             # Core configurations
-│   │   ├── config.py     # Settings
-│   │   ├── database.py   # Database connection
-│   │   └── security.py   # JWT & password hashing
-│   ├── models/           # SQLAlchemy models
-│   │   └── models.py     # All database models
-│   ├── schemas/          # Pydantic schemas
+│   ├── api/           # API endpoints
+│   │   ├── auth.py
+│   │   ├── documents.py
+│   │   ├── nlp.py
+│   │   ├── users.py
+│   │   └── visualization.py
+│   ├── core/          # Core configurations
+│   │   ├── config.py
+│   │   ├── database.py
+│   │   └── security.py
+│   ├── models/        # SQLAlchemy models
+│   │   └── models.py
+│   ├── schemas/       # Pydantic schemas
 │   │   ├── user_schemas.py
 │   │   └── document_schemas.py
-│   ├── services/         # Business logic
-│   │   ├── nlp_service.py      # NLP processing
-│   │   ├── custom_nlp.py       # Indonesian NLP
-│   │   ├── mendeley_service.py # Mendeley integration
-│   │   ├── zotero_service.py   # Zotero integration
-│   │   ├── email_service.py    # Email notifications
-│   │   └── redis_service.py    # Redis caching
-│   └── main.py           # FastAPI application
-├── uploads/              # Uploaded files (organized by user)
-├── logs/                 # Application logs
-├── Dockerfile            # Docker configuration
-├── docker-compose.yml    # Multi-container setup
-├── requirements.txt      # Python dependencies
-└── .env                  # Environment variables
+│   ├── services/      # Business logic
+│   │   └── nlp_service.py
+│   └── main.py        # FastAPI application
+├── uploads/           # Uploaded files
+├── logs/              # Application logs
+├── Dockerfile
+├── docker-compose.yml
+├── requirements.txt
+└── .env
 ```
 
 ## 🐳 Docker Commands

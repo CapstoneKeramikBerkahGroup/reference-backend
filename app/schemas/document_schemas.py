@@ -85,7 +85,7 @@ class DokumenResponse(DokumenBase):
     id: int
     mahasiswa_id: int
     nama_file: str
-    path_file: str
+    file_path: str
     format: str
     ukuran_kb: int
     tanggal_unggah: datetime

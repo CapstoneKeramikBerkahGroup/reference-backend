@@ -86,7 +86,7 @@ async def upload_document(
         mahasiswa_id=current_mahasiswa.id,
         judul=judul or file.filename,
         nama_file=file.filename,
-        path_file=file_path,
+        file_path=file_path,  
         format=file_format,
         ukuran_kb=file_size_kb,
         status_analisis="pending"
@@ -152,7 +152,7 @@ async def get_document_by_id(
         "id": dokumen.id,
         "mahasiswa_id": dokumen.mahasiswa_id,
         "nama_file": dokumen.nama_file,
-        "path_file": dokumen.path_file,
+        "file_path": dokumen.file_path, 
         "format": dokumen.format,
         "ukuran_kb": dokumen.ukuran_kb,
         "tanggal_unggah": dokumen.tanggal_unggah,
@@ -197,11 +197,11 @@ async def download_document(
     if not dokumen:
         raise HTTPException(status_code=404, detail="Document not found")
     
-    if not os.path.exists(dokumen.path_file):
+    if not os.path.exists(dokumen.file_path):  
         raise HTTPException(status_code=404, detail="File not found on server")
     
     return FileResponse(
-        path=dokumen.path_file,
+        path=dokumen.file_path,  
         filename=dokumen.nama_file,
         media_type='application/octet-stream'
     )
@@ -224,8 +224,8 @@ async def delete_document(
         raise HTTPException(status_code=404, detail="Document not found")
     
     # Delete physical file
-    if os.path.exists(dokumen.path_file):
-        os.remove(dokumen.path_file)
+    if os.path.exists(dokumen.file_path):  
+        os.remove(dokumen.file_path)  
     
     # Delete database record
     db.delete(dokumen)

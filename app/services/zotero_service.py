@@ -22,14 +22,11 @@ class ZoteroService:
 
         try:
             # 2. Koneksi ke Zotero API
-            library_type = creds.library_type or 'user'
-            logger.info(f"Connecting to Zotero: user_id={creds.zotero_user_id}, library_type={library_type}")
-            zot = zotero.Zotero(creds.zotero_user_id, library_type, creds.api_key)
+            zot = zotero.Zotero(creds.zotero_user_id, creds.library_type, creds.api_key)
             
             # 3. Ambil 50 item teratas (bisa dinaikkan nanti)
             logger.info(f"Fetching items for Zotero User {creds.zotero_user_id}...")
             items = zot.top(limit=50)
-            logger.info(f"Retrieved {len(items)} items from Zotero API")
             
             synced_count = 0
             for item in items:
@@ -84,9 +81,7 @@ class ZoteroService:
 
         except Exception as e:
             logger.error(f"❌ Zotero Sync Error: {e}")
-            import traceback
-            traceback.print_exc()
-            raise Exception(f"Failed to sync Zotero library: {str(e)}")
+            raise e
     
     def process_zotero_document(self, ext_ref_id: int, db: Session, user_id: int):
         """
@@ -141,13 +136,13 @@ class ZoteroService:
         # Kita butuh ID Mahasiswa dari User ID
         mahasiswa = db.query(Mahasiswa).filter(Mahasiswa.user_id == user_id).first()
         if not mahasiswa:
-             raise Exception("User profile not found")
+             raise Exception("Profil mahasiswa tidak ditemukan")
 
         new_doc = Dokumen(
             mahasiswa_id=mahasiswa.id,
             judul=ext_ref.title,
-            nama_file=unique_filename,
-            path_file=file_path,
+            nama_file=file_name,
+            file_path=file_path,
             format="pdf",
             ukuran_kb=os.path.getsize(file_path) // 1024,
             status_analisis="pending" # Nanti diproses oleh worker

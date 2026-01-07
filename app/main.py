@@ -6,7 +6,8 @@ import os
 
 from app.core.config import settings
 from app.core.database import engine, Base
-from app.api import auth, documents, users, nlp, visualization, dosen, pembimbing, mendeley, integration
+# Import routers dengan benar
+from app.api import auth, documents, users, nlp, visualization, dosen, pembimbing, mendeley, integration, gap_analysis, drafts
 
 # Create uploads directory if not exists
 os.makedirs("uploads", exist_ok=True)
@@ -39,7 +40,8 @@ app = FastAPI(
 # CORS Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    # UBAH INI: Izinkan semua origin untuk development
+    allow_origins=["*"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -58,7 +60,8 @@ app.include_router(dosen.router, prefix="/api/dosen", tags=["Dosen"])
 app.include_router(pembimbing.router, prefix="/api/pembimbing", tags=["Pembimbing Requests"])
 app.include_router(mendeley.router, prefix="/api/mendeley", tags=["Mendeley Integration"])
 app.include_router(integration.router, prefix="/api/integration", tags=["Zotero Integration"])
-
+app.include_router(gap_analysis.router, prefix="/api/gap-analysis", tags=["Gap Analysis"])
+app.include_router(drafts.router, prefix="/api/drafts", tags=["Drafting"])
 
 @app.get("/")
 async def root():

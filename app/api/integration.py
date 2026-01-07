@@ -1,153 +1,167 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
+from pydantic import BaseModel, field_validator, Field
+from typing import Optional, List, Any, Union
 from app.core.database import get_db
-from app.api.auth import get_current_user, get_current_mahasiswa
+from app.api.auth import get_current_user
+from app.models.models import User, UserZotero, ExternalReference
 from app.services.zotero_service import zotero_service
-from app.models import UserZotero, ExternalReference, Mahasiswa
-from pydantic import BaseModel
-from typing import List, Optional
+from datetime import datetime
+import logging
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
-# Schema untuk Request
-class ZoteroConnectRequest(BaseModel):
-    user_id_zotero: str
+# ===== Schemas =====
+class ZoteroConfigCreate(BaseModel):
+    user_id_zotero: Union[str, int]
     api_key_zotero: str
+    library_type: str = "user"
 
-# Schema untuk Response (Sederhana)
-class ReferenceResponse(BaseModel):
-    id: int
-    title: str
-    authors: str
-    year: str
-    source: str
+    @field_validator('user_id_zotero', mode='before')
+    @classmethod
+    def transform_to_string(cls, v):
+        return str(v)
     
+class ZoteroConfigResponse(BaseModel):
+    id: int = 0
+    user_id: int = 0
+    zotero_user_id: str = ""
+    library_type: str = "user"
+    last_sync: Optional[datetime] = None
     class Config:
         from_attributes = True
 
-@router.post("/zotero/connect")
-async def connect_zotero(
-    payload: ZoteroConnectRequest,
+
+# ===== Endpoints =====
+@router.post("/zotero/config")
+async def set_zotero_config(
+    config: ZoteroConfigCreate,
     db: Session = Depends(get_db),
-    current_mahasiswa: Mahasiswa = Depends(get_current_mahasiswa)
+    current_user: User = Depends(get_current_user)
 ):
-    """Menyimpan API Key Zotero user ke database"""
-    existing = db.query(UserZotero).filter(UserZotero.user_id == current_mahasiswa.user_id).first()
-    
+    if current_user.role != "mahasiswa":
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    z_id = str(config.user_id_zotero)
+    existing = db.query(UserZotero).filter(UserZotero.user_id == current_user.id).first()
+
     if existing:
-        existing.zotero_user_id = payload.user_id_zotero
-        existing.api_key = payload.api_key_zotero
+        existing.zotero_user_id = z_id
+        existing.api_key = config.api_key_zotero
     else:
-        new_conn = UserZotero(
-            user_id=current_mahasiswa.user_id,
-            zotero_user_id=payload.user_id_zotero,
-            api_key=payload.api_key_zotero
+        new_config = UserZotero(
+            user_id=current_user.id,
+            zotero_user_id=z_id,
+            api_key=config.api_key_zotero,
+            library_type=config.library_type
         )
-        db.add(new_conn)
+        db.add(new_config)
     
     db.commit()
-    return {"message": "Zotero connected successfully"}
+    return {"message": "Zotero connected successfully!"}
 
-@router.post("/zotero/sync")
-async def sync_zotero(
-    db: Session = Depends(get_db),
-    current_mahasiswa: Mahasiswa = Depends(get_current_mahasiswa)
-):
-    """Memicu proses sinkronisasi manual"""
-    try:
-        result = zotero_service.sync_library(current_mahasiswa.user_id, db)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-@router.get("/references", response_model=List[ReferenceResponse])
-async def get_external_references(
-    db: Session = Depends(get_db),
-    current_mahasiswa: Mahasiswa = Depends(get_current_mahasiswa)
-):
-    """Mengambil list referensi untuk ditampilkan di Draft TA"""
-    refs = db.query(ExternalReference).filter(ExternalReference.user_id == current_mahasiswa.user_id).all()
-    return refs
-
-@router.post("/zotero/analyze/{ref_id}")
-async def analyze_zotero_reference(
-    ref_id: int,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    current_mahasiswa: Mahasiswa = Depends(get_current_mahasiswa)
-):
-    """
-    Mengubah item Zotero menjadi Dokumen lokal dan memulai analisis AI.
-    """
-    try:
-        # 1. Download & Convert ke Dokumen
-        result = zotero_service.process_zotero_document(ref_id, db, current_mahasiswa.user_id)
-        doc_id = result['document_id']
-
-        # 2. Trigger AI Processing (sama seperti saat upload manual)
-        # Import fungsi background task dari nlp.py (hindari circular import dengan import di dalam fungsi atau pindahkan logic)
-        from app.api.nlp import process_document_background
-        background_tasks.add_task(process_document_background, doc_id, db)
-
-        return {"message": "Processing started", "document_id": doc_id}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-@router.get("/zotero/config")
+@router.get("/zotero/config", response_model=ZoteroConfigResponse)
 async def get_zotero_config(
     db: Session = Depends(get_db),
-    current_mahasiswa: Mahasiswa = Depends(get_current_mahasiswa)
+    current_user: User = Depends(get_current_user)
 ):
-    """
-    Get Zotero configuration for current user
-    """
-    config = db.query(UserZotero).filter(UserZotero.user_id == current_mahasiswa.user_id).first()
+    """Ambil konfigurasi Zotero. Jika belum ada, kembalikan default dummy."""
+    config = db.query(UserZotero).filter(UserZotero.user_id == current_user.id).first()
     
     if not config:
-        return {"api_key": "", "user_id": ""}
+        return ZoteroConfigResponse(
+            id=0,
+            user_id=current_user.id,
+            zotero_user_id="",
+            api_key="",
+            library_type="user",
+            last_sync=None
+        )
+    
+    return config
+
+
+@router.post("/zotero/sync")
+async def sync_zotero_library(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Sync items dari Zotero library"""
+    
+    if current_user.role != "mahasiswa":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Hanya mahasiswa yang dapat sync Zotero"
+        )
+    
+    try:
+        result = zotero_service.sync_library(current_user.id, db)
+        return result
+    except Exception as e:
+        logger.error(f"❌ Sync failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+
+
+@router.get("/references")
+async def get_external_references(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    source: str | None = None
+):
+    """Get all external references (dari Zotero/Mendeley)"""
+    
+    query = db.query(ExternalReference).filter(
+        ExternalReference.user_id == current_user.id
+    )
+    
+    if source:
+        query = query.filter(ExternalReference.source == source)
+    
+    references = query.order_by(ExternalReference.id.desc()).all()
     
     return {
-        "api_key": config.api_key,
-        "user_id": config.zotero_user_id
+        "total": len(references),
+        "data": [
+            {
+                "id": ref.id,
+                "source": ref.source,
+                "title": ref.title,
+                "authors": ref.authors,
+                "year": ref.year,
+                "url": ref.url,
+                "has_pdf": ref.has_pdf,
+                "is_analyzed": ref.is_analyzed,
+                "local_document_id": ref.local_document_id
+            }
+            for ref in references
+        ]
     }
 
-@router.post("/zotero/config")
-async def save_zotero_config(
-    payload: ZoteroConnectRequest,
-    db: Session = Depends(get_db),
-    current_mahasiswa: Mahasiswa = Depends(get_current_mahasiswa)
-):
-    """
-    Save Zotero configuration (alias for /zotero/connect)
-    """
-    existing = db.query(UserZotero).filter(UserZotero.user_id == current_mahasiswa.user_id).first()
-    
-    if existing:
-        existing.zotero_user_id = payload.user_id_zotero
-        existing.api_key = payload.api_key_zotero
-    else:
-        new_conn = UserZotero(
-            user_id=current_mahasiswa.user_id,
-            zotero_user_id=payload.user_id_zotero,
-            api_key=payload.api_key_zotero
-        )
-        db.add(new_conn)
-    
-    db.commit()
-    return {"message": "Zotero configuration saved successfully"}
 
-@router.post("/zotero/disconnect")
-async def disconnect_zotero(
+@router.post("/zotero/analyze/{ext_ref_id}")
+async def analyze_zotero_document(
+    ext_ref_id: int,
     db: Session = Depends(get_db),
-    current_mahasiswa: Mahasiswa = Depends(get_current_mahasiswa)
+    current_user: User = Depends(get_current_user)
 ):
-    """
-    Disconnect Zotero account
-    """
-    config = db.query(UserZotero).filter(UserZotero.user_id == current_mahasiswa.user_id).first()
+    """Download dan analisis document dari Zotero"""
     
-    if config:
-        db.delete(config)
-        db.commit()
+    if current_user.role != "mahasiswa":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Hanya mahasiswa yang dapat analyze document"
+        )
     
-    return {"message": "Zotero disconnected successfully"}
+    try:
+        result = zotero_service.process_zotero_document(ext_ref_id, db, current_user.id)
+        return result
+    except Exception as e:
+        logger.error(f"❌ Analysis failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )

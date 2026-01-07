@@ -14,3 +14,8 @@ htmlcov/
 .vscode/
 .idea/
 *.log
+nltk_data/
+.cache/
+.spacy/
+custom_nlp.py
+nlp_service.py.old

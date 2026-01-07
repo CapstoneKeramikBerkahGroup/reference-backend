@@ -48,7 +48,7 @@ services:
       - MENDELEY_REDIRECT_URI=${MENDELEY_REDIRECT_URI:-http://localhost:8000/api/mendeley/oauth/callback}
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:5173}
     volumes:
-      - ./app:/app/app
+      # - ./app:/app/app
       - ./uploads:/app/uploads
       - ./logs:/app/logs
     depends_on:

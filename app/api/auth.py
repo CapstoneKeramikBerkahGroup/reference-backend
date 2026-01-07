@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from typing import Optional
 import uuid
 
@@ -52,7 +52,13 @@ async def get_current_user(
     except ValueError:
         raise credentials_exception
     
-    user = db.query(User).filter(User.id == user_id).first()
+    user = db.query(User).options(
+        # Load profil mahasiswa & dosen pembimbingnya
+        joinedload(User.mahasiswa_profile).joinedload(Mahasiswa.dosen_pembimbing),
+        # Load profil dosen (jika user adalah dosen)
+        joinedload(User.dosen_profile)
+    ).filter(User.id == user_id).first()
+    
     if user is None:
         raise credentials_exception
     
@@ -208,21 +214,23 @@ async def login(
 
 @router.get("/me", response_model=UserResponse)
 async def get_me(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user), # Ini sudah pakai joinedload
     db: Session = Depends(get_db)
 ):
     """Get current user information"""
+    # 1. Convert SQLAlchemy object ke Pydantic
     response = UserResponse.from_orm(current_user)
     
-    # Add bidang_keahlian from mahasiswa or dosen profile
-    if current_user.role == "mahasiswa":
-        mahasiswa = db.query(Mahasiswa).filter(Mahasiswa.user_id == current_user.id).first()
-        if mahasiswa:
-            response.bidang_keahlian = mahasiswa.bidang_keahlian
-    elif current_user.role == "dosen":
-        dosen = db.query(Dosen).filter(Dosen.user_id == current_user.id).first()
-        if dosen:
-            response.bidang_keahlian = dosen.bidang_keahlian
+    # 2. Manual Enrichment (Isi bidang keahlian)
+    if current_user.role == "mahasiswa" and current_user.mahasiswa_profile:
+        response.bidang_keahlian = current_user.mahasiswa_profile.bidang_keahlian
+        
+        # [OPSIONAL] Trik manual jika Schema DosenPembimbingInfo di atas sulit menampilkan nama
+        # Kita bisa inject manual jika perlu, tapi biasanya joinedload sudah cukup
+        # jika schema Pydantic-nya benar.
+
+    elif current_user.role == "dosen" and current_user.dosen_profile:
+        response.bidang_keahlian = current_user.dosen_profile.bidang_keahlian
     
     return response
 

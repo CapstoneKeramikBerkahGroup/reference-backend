@@ -76,7 +76,7 @@ async def get_document_graph(
                 texts.append(doc.ringkasan)
             else:
                 try:
-                    text = nlp_service.extract_text_from_file(doc.path_file)
+                    text = nlp_service.extract_text_from_file(doc.file_path)
                     texts.append(text[:1000] if text else doc.judul or doc.nama_file)
                 except Exception as e:
                     print(f"Error extracting text from {doc.nama_file}: {e}")
