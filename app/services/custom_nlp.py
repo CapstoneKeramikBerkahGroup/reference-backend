@@ -210,7 +210,6 @@ def extract_keywords_bert(text: str, kw_model_instance: KeyBERT, top_n: int = 10
     except Exception as e:
         logger.error(f"❌ Error KeyBERT: {e}")
         return []
-<<<<<<< Updated upstream
 
 # --- SUMMARY LOGIC (ANTI-DATA V6) ---
 
@@ -235,10 +234,14 @@ def polish_english_summary(text: str) -> str:
     return text
 
 def create_extractive_summary_indonesian(text: str, num_sentences: int = 3) -> str:
-=======
+    """
+    Ekstraksi ringkasan berbahasa Indonesia dari text.
+    """
+    if not text: return ""
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    return ' '.join(sentences[:num_sentences])
     
 def extract_key_technical_details(text: str, lang: str = 'en') -> List[str]:
->>>>>>> Stashed changes
     """
     Ekstraksi 'Jarum dalam Jerami': Performa, Metode, dan Hasil (Positif/Negatif).
     [FIX] Sekarang mendeteksi 'NO significant relationship' dan 'Hypothesis NOT rejected'.
@@ -495,8 +498,6 @@ def generate_summary_bart(text: str, summarizer_instance) -> str:
     try:
         clean_text = clean_text_lines(text)
         target_text = locate_intro_or_abstract(clean_text)
-<<<<<<< Updated upstream
-=======
         input_text = target_text[:MAX_CHARS_FOR_MODEL]
         
         # Generate Summary by AI
@@ -656,27 +657,9 @@ def generate_embeddings(text: str, model: SentenceTransformer) -> Optional[np.nd
         clean = fix_common_artifacts(text)
         target = locate_intro_or_abstract(clean)[:MAX_CHARS_FOR_MODEL]
         return model.encode(target, convert_to_numpy=True)
->>>>>>> Stashed changes
-        lang = detect_language(target_text)
-        
-        if lang == 'id':
-            logger.info("🇮🇩 Indo text. Using Enhanced V6 Summary.")
-            final_summary = create_extractive_summary_indonesian(target_text, num_sentences=4)
-        else:
-            logger.info("🇬🇧 English text. Using BART + Polishing.")
-            input_text = target_text[:MAX_CHARS_FOR_MODEL]
-            
-            if summarizer_instance:
-                summary = summarizer_instance(input_text, max_length=200, min_length=60, num_beams=1, do_sample=False)
-                raw_summary = summary[0]['summary_text']
-                final_summary = polish_english_summary(raw_summary)
-            else:
-                final_summary = create_extractive_summary_indonesian(input_text)
     except Exception as e:
-        logger.warning(f"⚠️ Summary failed: {e}")
-        return create_extractive_summary_indonesian(text) 
-        
-    return fix_common_artifacts(final_summary)
+        logger.error(f"❌ Error generating embeddings: {e}")
+        return None
 
 def extract_references(full_text: str) -> List[Dict[str, str]]:
     """[FIXED] Nuclear Reference Splitter - Enhanced untuk English References."""
