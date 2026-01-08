@@ -8,16 +8,21 @@ RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     postgresql-client \
+    # Runtime libs needed by Pillow/ImageCaptcha
+    libjpeg62-turbo \
+    zlib1g \
+    libfreetype6 \
+    libpng16-16 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
 COPY requirements.txt .
 
-# Upgrade pip and increase timeout
+# Upgrade pip first
 RUN pip install --upgrade pip
 
 # Install all Python dependencies from requirements.txt
-RUN pip install --default-timeout=1000 --retries 5 -r requirements.txt
+RUN pip install --no-cache-dir --default-timeout=1000 --retries 5 -r requirements.txt
 
 # Copy application code
 COPY . .

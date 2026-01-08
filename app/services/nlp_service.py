@@ -10,6 +10,7 @@ import hashlib
 from .custom_nlp import (
     extract_keywords_bert,
     extract_keywords_indonesian,
+    generate_smart_summary_gemini,
     generate_summary_bart,
     generate_embeddings,
     calculate_similarity_matrix,
@@ -21,6 +22,8 @@ from .custom_nlp import (
     extract_references,
     detect_language,
     preprocess_indonesian_text,
+    translate_summary_to_indonesian,
+    generate_thesis_outline,
 )
 
 logger = logging.getLogger(__name__)
@@ -156,24 +159,35 @@ class NLPService:
     
     async def generate_summary(self, text: str, max_length: int = 150) -> str:
         """
-        Generate summary from text using BART (English) or extractive method (Indonesian)
-        
-        Args:
-            text: Document text
-            max_length: Maximum summary length (not strictly enforced for extractive)
-            
-        Returns:
-            Summary text
+        Generate summary using Gemini (Priority) -> BART -> Extractive (Fallback).
         """
         logger.info(f"Generating summary from text of length {len(text)}")
         
         try:
-            # Deteksi bahasa
+            # --- 1. DETEKSI BAHASA ---
             lang = detect_language(text)
+
+            # --- 2. COBA GEMINI (SMART SUMMARY) ---
+            # Kita import di sini untuk memastikan fungsi terbaru terpanggil
+            try:
+                from .custom_nlp import generate_smart_summary_gemini
+                
+                # Panggil Gemini (akan otomatis handle format bullet points)
+                gemini_summary = generate_smart_summary_gemini(text, lang=lang)
+                
+                if gemini_summary:
+                    logger.info("✨ Using Gemini Smart Summary")
+                    return gemini_summary
+            except ImportError:
+                logger.warning("⚠️ Function generate_smart_summary_gemini not found in custom_nlp")
+            except Exception as e:
+                logger.warning(f"⚠️ Gemini Summary failed: {e}")
+
+            # --- 3. FALLBACK KE METODE LAMA (JIKA GEMINI GAGAL/KEY INVALID) ---
+            logger.info("🔄 Falling back to standard summarization")
             
-            # Untuk teks pendek atau bahasa Indonesia, gunakan extractive summary
             if lang == 'id' or len(text) < 200:
-                logger.info(f"🇮🇩 Generating extractive summary (lang={lang})")
+                logger.info(f"🇮🇩 Generating Indonesian summary (Extractive)")
                 from .custom_nlp import create_extractive_summary_indonesian
                 summary = create_extractive_summary_indonesian(text, num_sentences=3)
             elif self.summarizer is None:
@@ -181,15 +195,18 @@ class NLPService:
                 from .custom_nlp import create_extractive_summary_indonesian
                 summary = create_extractive_summary_indonesian(text, num_sentences=3)
             else:
-                # Gunakan BART untuk teks panjang dalam bahasa Inggris
-                summary = generate_summary_bart(text, self.summarizer)
+                # BART untuk Inggris
+                from .custom_nlp import generate_summary_bart, translate_summary_to_indonesian
+                summary_en = generate_summary_bart(text, self.summarizer)
+                summary_id = translate_summary_to_indonesian(summary_en)
+                summary = f"[English]\n{summary_en}\n\n[Indonesia]\n{summary_id}"
             
-            logger.info(f"Generated summary: {summary[:100]}...")
             return summary
+
         except Exception as e:
             logger.error(f"Error generating summary: {e}")
             return "Failed to generate summary"
-    
+        
     async def calculate_similarity(self, text1: str, text2: str) -> float:
         """
         Calculate similarity between two texts using embeddings
