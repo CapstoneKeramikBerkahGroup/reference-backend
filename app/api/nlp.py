@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List
 import logging
+from pydantic import BaseModel
 
 # Import Database & Models
 from app.core.database import get_db
@@ -9,6 +10,8 @@ from app.core.database import get_db
 from app.models import Dokumen, KataKunci, Referensi, Mahasiswa, DokumenKata 
 from app.api.auth import get_current_user
 from app.api.auth import get_current_mahasiswa
+from app.services.custom_nlp import generate_thesis_outline
+
 
 # Import Schemas
 from app.schemas import (
@@ -16,7 +19,7 @@ from app.schemas import (
     SummarizationRequest, SummarizationResponse
 )
 
-# Import Service
+# Import Servicen
 from app.services.nlp_service import nlp_service
 
 router = APIRouter()
@@ -85,8 +88,7 @@ async def process_document_background(dokumen_id: int, db: Session):
             new_ref = Referensi(
                 dokumen_id=doc.id,
                 teks_referensi=ref['teks_referensi'],
-                nomor=ref.get('nomor'),
-                status_validasi='pending'  # Set status default sebagai pending
+                nomor=ref.get('nomor') 
             )
             db.add(new_ref)
 
@@ -258,3 +260,23 @@ async def compare_documents_gap(
             "common_topics": common_keywords
         }
     }
+
+class OutlineRequest(BaseModel):
+    title: str
+
+@router.post("/generate-outline")
+async def generate_outline_endpoint(request: OutlineRequest):
+    """
+    Generate Thesis Outline structure based on Title.
+    """
+    try:
+        # Panggil logika dari custom_nlp.py
+        outline = generate_thesis_outline(request.title)
+        
+        return {
+            "status": "success", 
+            "data": outline
+        }
+    except Exception as e:
+        print(f"❌ Error generating outline: {str(e)}") # Cek log ini di terminal
+        raise HTTPException(status_code=500, detail=str(e))

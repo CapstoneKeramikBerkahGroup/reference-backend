@@ -560,3 +560,4 @@ async def change_password(
         "message": "Password changed successfully",
         "success": True
     }
+>>>>>>> 8395d55e1c43ab28d66cb510b9b9a594078c00d4
