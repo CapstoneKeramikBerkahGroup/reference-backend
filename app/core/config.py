@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     
     # Redis
     REDIS_URL: str = "redis://redis:6379/0"
+    
+    # API Settings
     GOOGLE_API_KEY: str = "AIzaSyBlguqa3reXkZ99_e2z8fY42VSJDa2BVJ4"
     
     # Security

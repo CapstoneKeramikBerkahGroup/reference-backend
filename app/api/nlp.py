@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List, Dict, Any
 from pydantic import BaseModel
 import logging
+from pydantic import BaseModel
 
 # Import Database & Models
 from app.core.database import get_db
@@ -10,13 +11,14 @@ from app.models.models import Dokumen, IdeaHistory, KataKunci, Referensi, Mahasi
 from app.api.auth import get_current_user
 from app.api.auth import get_current_mahasiswa
 
+
 # Import Schemas
 from app.schemas import (
     KeywordExtractionRequest, KeywordExtractionResponse,
     SummarizationRequest, SummarizationResponse
 )
 
-# Import Service
+# Import Servicen
 from app.services.nlp_service import nlp_service
 
 router = APIRouter()
@@ -405,3 +407,23 @@ async def compare_documents_gap(
             "common_topics": common_keywords
         }
     }
+
+class OutlineRequest(BaseModel):
+    title: str
+
+@router.post("/generate-outline")
+async def generate_outline_endpoint(request: OutlineRequest):
+    """
+    Generate Thesis Outline structure based on Title.
+    """
+    try:
+        # Use nlp_service method
+        outline = await nlp_service.generate_thesis_outline(request.title, lang=request.language)
+        
+        return {
+            "status": "success", 
+            "data": outline
+        }
+    except Exception as e:
+        logger.error(f"❌ Error generating outline: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
