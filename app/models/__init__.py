@@ -12,7 +12,10 @@ from app.models.models import (
     dokumen_tag,
     DokumenKata,
     UserZotero,
-    ExternalReference
+    ExternalReference,
+    Draft,
+    DraftComment,
+    IdeaHistory
 )
 
 __all__ = [
@@ -29,5 +32,8 @@ __all__ = [
     "dokumen_tag",
     "DokumenKata",
     "UserZotero",
-    "ExternalReference"
+    "ExternalReference",
+    "Draft",
+    "DraftComment",
+    "IdeaHistory"
 ]

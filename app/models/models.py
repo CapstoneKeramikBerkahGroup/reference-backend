@@ -94,7 +94,7 @@ class Draft(Base):
     title = Column(String(255))
     version = Column(Integer, default=1)
     file_path = Column(String(500))
-    status = Column(String(50), default='pending') # pending, reviewed, approved
+    status = Column(String(50), default='pending') # pending, reviewed, approved (layak tanpa revisi)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
     mahasiswa = relationship("Mahasiswa", back_populates="drafts")
@@ -133,7 +133,8 @@ class Dokumen(Base):
     mahasiswa_id = Column(Integer, ForeignKey('mahasiswa.id', ondelete='CASCADE'), nullable=False)
     judul = Column(String(500))
     nama_file = Column(String(255), nullable=False)
-    file_path = Column(String(500), nullable=False) # Pastikan nama field konsisten
+    path_file = Column(String(500), nullable=False) # Field yang ada di DB (NOT NULL)
+    file_path = Column(String(500), nullable=True)  # Field tambahan (nullable)
     format = Column(String(10))
     ukuran_kb = Column(Integer)
     tanggal_unggah = Column(DateTime(timezone=True), server_default=func.now())

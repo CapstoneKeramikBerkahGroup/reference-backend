@@ -66,6 +66,22 @@ def save_upload_file(upload_file: UploadFile, mahasiswa_id: int) -> tuple:
 
 
 # ============= Document Endpoints =============
+
+# OPTIONS handler for CORS preflight on upload
+@router.options("/upload")
+async def upload_options():
+    """Handle CORS preflight for upload endpoint"""
+    from fastapi import Response
+    return Response(
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+            "Access-Control-Max-Age": "3600",
+        }
+    )
+
 @router.post("/upload", response_model=DokumenResponse, status_code=201)
 async def upload_document(
     file: UploadFile = File(...),
@@ -86,7 +102,8 @@ async def upload_document(
         mahasiswa_id=current_mahasiswa.id,
         judul=judul or file.filename,
         nama_file=file.filename,
-        file_path=file_path,  
+        path_file=file_path,  # Set field yang NOT NULL di database
+        file_path=file_path,  # Set field yang nullable (untuk backward compatibility)
         format=file_format,
         ukuran_kb=file_size_kb,
         status_analisis="pending"
@@ -99,6 +116,21 @@ async def upload_document(
     return dokumen
 
 
+# OPTIONS handler for CORS preflight on documents list
+@router.options("/")
+async def documents_list_options():
+    """Handle CORS preflight for documents list endpoint"""
+    from fastapi import Response
+    return Response(
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+            "Access-Control-Max-Age": "3600",
+        }
+    )
+
 @router.get("/", response_model=List[DokumenResponse])
 async def get_all_documents(
     current_mahasiswa: Mahasiswa = Depends(get_current_mahasiswa),
@@ -108,11 +140,21 @@ async def get_all_documents(
 ):
     """Get all documents for current mahasiswa"""
     
-    documents = db.query(Dokumen).filter(
-        Dokumen.mahasiswa_id == current_mahasiswa.id
-    ).offset(skip).limit(limit).all()
-    
-    return documents
+    try:
+        print(f"📚 Getting documents for mahasiswa_id: {current_mahasiswa.id}")
+        
+        documents = db.query(Dokumen).filter(
+            Dokumen.mahasiswa_id == current_mahasiswa.id
+        ).offset(skip).limit(limit).all()
+        
+        print(f"✅ Found {len(documents)} documents")
+        
+        return documents
+    except Exception as e:
+        print(f"❌ Error getting documents: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error retrieving documents: {str(e)}")
 
 
 @router.get("/doc/{dokumen_id}", response_model=DokumenDetailResponse)
@@ -181,6 +223,21 @@ async def get_document_by_id(
     return dokumen_dict
 
 
+# OPTIONS handler for CORS preflight on document download
+@router.options("/doc/{dokumen_id}/download")
+async def document_download_options(dokumen_id: int):
+    """Handle CORS preflight for document download endpoint"""
+    from fastapi import Response
+    return Response(
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+            "Access-Control-Max-Age": "3600",
+        }
+    )
+
 @router.get("/doc/{dokumen_id}/download")
 async def download_document(
     dokumen_id: int,
@@ -197,14 +254,24 @@ async def download_document(
     if not dokumen:
         raise HTTPException(status_code=404, detail="Document not found")
     
-    if not os.path.exists(dokumen.file_path):  
+    # Check both file_path and path_file
+    file_to_download = dokumen.file_path or dokumen.path_file
+    if not file_to_download or not os.path.exists(file_to_download):  
         raise HTTPException(status_code=404, detail="File not found on server")
     
-    return FileResponse(
-        path=dokumen.file_path,  
+    response = FileResponse(
+        path=file_to_download,  
         filename=dokumen.nama_file,
         media_type='application/octet-stream'
     )
+    
+    # Add CORS headers
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+    response.headers["Access-Control-Expose-Headers"] = "Content-Disposition"
+    
+    return response
 
 
 @router.delete("/doc/{dokumen_id}")
@@ -223,9 +290,13 @@ async def delete_document(
     if not dokumen:
         raise HTTPException(status_code=404, detail="Document not found")
     
-    # Delete physical file
-    if os.path.exists(dokumen.file_path):  
-        os.remove(dokumen.file_path)  
+    # Delete physical file (check both file_path and path_file)
+    file_to_delete = dokumen.file_path or dokumen.path_file
+    if file_to_delete and os.path.exists(file_to_delete):
+        try:
+            os.remove(file_to_delete)
+        except Exception as e:
+            logger.error(f"Failed to delete file: {e}")
     
     # Delete database record
     db.delete(dokumen)
@@ -330,6 +401,22 @@ async def search_documents(
 
 
 # ============= Compilation Report Endpoint =============
+
+# OPTIONS handler for CORS preflight on compilation download
+@router.options("/compilation/download")
+async def compilation_download_options():
+    """Handle CORS preflight for compilation download endpoint"""
+    from fastapi import Response
+    return Response(
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+            "Access-Control-Max-Age": "3600",
+        }
+    )
+
 @router.get("/compilation/download")
 async def download_compilation_report(
     tag_filter: Optional[str] = Query(None, description="Filter by tag name"),
@@ -753,7 +840,11 @@ async def download_compilation_report(
         buffer,
         media_type="application/pdf",
         headers={
-            "Content-Disposition": f'attachment; filename="{filename}"'
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+            "Access-Control-Expose-Headers": "Content-Disposition",
         }
     )
 

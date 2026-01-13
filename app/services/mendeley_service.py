@@ -335,13 +335,21 @@ class MendeleyService:
                 ref_data = self.parse_mendeley_document(mendeley_doc)
                 
                 if ref_data['teks_referensi']:  # Only import if we have content
+                    # Convert tahun to integer or None
+                    tahun_int = None
+                    if ref_data['tahun']:
+                        try:
+                            tahun_int = int(ref_data['tahun'])
+                        except (ValueError, TypeError):
+                            tahun_int = None
+                    
                     new_ref = Referensi(
                         dokumen_id=dokumen_id,
                         teks_referensi=ref_data['teks_referensi'],
                         penulis=ref_data['penulis'],
-                        tahun=ref_data['tahun'],
+                        tahun=tahun_int,
                         judul_publikasi=ref_data['judul_publikasi'],
-                        nomor=idx,
+                        nomor=str(idx),
                         status_validasi='pending'
                     )
                     db_session.add(new_ref)
@@ -509,13 +517,21 @@ class MendeleyService:
                 db_session.flush()  # Get the dokumen_id
                 
                 # Add the paper itself as a reference
+                # Convert tahun to integer or None
+                tahun_int = None
+                if ref_data['tahun']:
+                    try:
+                        tahun_int = int(ref_data['tahun'])
+                    except (ValueError, TypeError):
+                        tahun_int = None
+                
                 new_ref = Referensi(
                     dokumen_id=new_dokumen.id,
                     teks_referensi=ref_data['teks_referensi'],
                     penulis=ref_data['penulis'],
-                    tahun=ref_data['tahun'],
+                    tahun=tahun_int,
                     judul_publikasi=ref_data['judul_publikasi'],
-                    nomor=1,
+                    nomor='1',
                     status_validasi='pending'
                 )
                 db_session.add(new_ref)

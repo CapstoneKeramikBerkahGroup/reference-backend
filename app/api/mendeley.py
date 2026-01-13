@@ -254,13 +254,21 @@ async def import_mendeley_references(
         imported_count = 0
         for idx, ref_data in enumerate(parsed_refs, start=1):
             if ref_data['teks_referensi']:  # Only import if we have content
+                # Convert tahun to integer or None
+                tahun_int = None
+                if ref_data['tahun']:
+                    try:
+                        tahun_int = int(ref_data['tahun'])
+                    except (ValueError, TypeError):
+                        tahun_int = None
+                
                 new_ref = Referensi(
                     dokumen_id=dokumen_id,
                     teks_referensi=ref_data['teks_referensi'],
                     penulis=ref_data['penulis'],
-                    tahun=ref_data['tahun'],
+                    tahun=tahun_int,
                     judul_publikasi=ref_data['judul_publikasi'],
-                    nomor=idx,
+                    nomor=str(idx),
                     status_validasi='pending'
                 )
                 db.add(new_ref)

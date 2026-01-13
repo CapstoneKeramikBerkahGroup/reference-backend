@@ -20,6 +20,7 @@ from app.schemas import (
 
 # Import Servicen
 from app.services.nlp_service import nlp_service
+from app.services.custom_nlp import extract_references
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -29,6 +30,8 @@ logger = logging.getLogger(__name__)
 class OutlineRequest(BaseModel):
     title: str
     language: str = "id"
+    outline_type: str = "thesis"  # "thesis" or "paper"
+    dokumen_id: int = None  # Optional: for paper outline to use document content
 
 class OutlineResponse(BaseModel):
     status: str
@@ -61,10 +64,12 @@ async def process_document_background(dokumen_id: int, db: Session, language: st
         db.commit()
 
         file_path = doc.file_path
+        logger.info(f"📁 Attempting to extract text from: {file_path}")
         full_text = nlp_service.extract_text_from_file(file_path)
         
         if not full_text:
-            raise Exception("Failed to extract text from file")
+            logger.error(f"❌ No text extracted from {file_path}")
+            raise Exception(f"Failed to extract text from file: {file_path}")
 
         # --- UPDATE DISINI: Gunakan parameter language ---
         logger.info(f"Generating smart summary ({language})...")
@@ -89,7 +94,7 @@ async def process_document_background(dokumen_id: int, db: Session, language: st
 
         # Extract References (Logika sama)
         db.query(Referensi).filter(Referensi.dokumen_id == dokumen_id).delete()
-        references = nlp_service.extract_references_from_text(full_text)
+        references = extract_references(full_text)
         for ref in references:
             new_ref = Referensi(
                 dokumen_id=doc.id,
@@ -160,6 +165,8 @@ async def generate_ideas_endpoint(
     
     # 1. Ambil dokumen
     docs = db.query(Dokumen).filter(Dokumen.id.in_(request.doc_ids)).all()
+    logger.info(f"📄 Found {len(docs)} documents in database")
+    
     if len(docs) < 2:
         raise HTTPException(status_code=400, detail="Pilih minimal 2 dokumen untuk sintesis ide.")
 
@@ -167,17 +174,24 @@ async def generate_ideas_endpoint(
     docs_data = []
     for doc in docs:
         try:
+            logger.info(f"📖 Extracting text from: {doc.file_path}")
             text = nlp_service.extract_text_from_file(doc.file_path)
             if text:
                 docs_data.append({
                     "title": doc.judul,
                     "text": text[:4000] # Ambil agak banyak biar idenya kaya
                 })
-        except Exception:
+                logger.info(f"✅ Successfully extracted {len(text)} chars from {doc.judul}")
+            else:
+                logger.warning(f"⚠️ No text extracted from {doc.judul}")
+        except Exception as e:
+            logger.error(f"❌ Error extracting from {doc.judul}: {e}")
             continue
-            
+    
+    logger.info(f"📊 Total documents with text: {len(docs_data)}")
+    
     if not docs_data:
-        raise HTTPException(status_code=400, detail="Gagal membaca teks dokumen.")
+        raise HTTPException(status_code=400, detail="Gagal membaca teks dokumen. Pastikan dokumen adalah PDF yang valid.")
 
     # 3. Call Gemini
     try:
@@ -185,7 +199,7 @@ async def generate_ideas_endpoint(
         return result
     except Exception as e:
         logger.error(f"Generate Idea Error: {e}")
-        raise HTTPException(status_code=500, detail="Gagal menghasilkan ide.")
+        raise HTTPException(status_code=500, detail=f"Gagal menghasilkan ide: {str(e)}")
 
 @router.post("/process/{dokumen_id}")
 async def process_document_endpoint(
@@ -233,13 +247,32 @@ def get_status(dokumen_id: int, db: Session = Depends(get_db)):
 @router.post("/generate-outline", response_model=OutlineResponse)
 async def generate_outline_endpoint(
     request: OutlineRequest,
-    current_user = Depends(get_current_user)
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     try:
-        logger.info(f"📝 Generating outline: {request.title} ({request.language})")
-        # Pastikan nlp_service.generate_thesis_outline dimodifikasi juga untuk menerima parameter bahasa
-        # Jika service belum support, Anda perlu update nlp_service.py juga.
-        outline = await nlp_service.generate_thesis_outline(request.title, lang=request.language) 
+        logger.info(f"📝 Generating {request.outline_type} outline: {request.title} ({request.language})")
+        
+        # Call appropriate function based on outline_type
+        if request.outline_type == "paper":
+            # Extract document content if dokumen_id provided
+            doc_content = None
+            if request.dokumen_id:
+                doc = db.query(Dokumen).filter(Dokumen.id == request.dokumen_id).first()
+                if doc and doc.file_path:
+                    try:
+                        doc_content = nlp_service.extract_text_from_file(doc.file_path)
+                        logger.info(f"📄 Extracted {len(doc_content)} chars from document for context")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Could not extract document content: {e}")
+            
+            outline = await nlp_service.generate_paper_outline(
+                request.title, 
+                lang=request.language,
+                doc_content=doc_content
+            )
+        else:  # default to thesis
+            outline = await nlp_service.generate_thesis_outline(request.title, lang=request.language)
         
         return {
             "status": "success",

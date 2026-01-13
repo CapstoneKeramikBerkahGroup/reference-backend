@@ -40,26 +40,51 @@ async def set_zotero_config(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    if current_user.role != "mahasiswa":
-        raise HTTPException(status_code=403, detail="Forbidden")
+    """Save Zotero configuration"""
+    try:
+        if current_user.role != "mahasiswa":
+            raise HTTPException(status_code=403, detail="Only mahasiswa can connect Zotero")
 
-    z_id = str(config.user_id_zotero)
-    existing = db.query(UserZotero).filter(UserZotero.user_id == current_user.id).first()
+        z_id = str(config.user_id_zotero).strip()
+        api_key = config.api_key_zotero.strip()
+        
+        # Validate inputs
+        if not z_id or not api_key:
+            raise HTTPException(status_code=400, detail="User ID and API Key are required")
+        
+        existing = db.query(UserZotero).filter(UserZotero.user_id == current_user.id).first()
 
-    if existing:
-        existing.zotero_user_id = z_id
-        existing.api_key = config.api_key_zotero
-    else:
-        new_config = UserZotero(
-            user_id=current_user.id,
-            zotero_user_id=z_id,
-            api_key=config.api_key_zotero,
-            library_type=config.library_type
-        )
-        db.add(new_config)
+        if existing:
+            existing.zotero_user_id = z_id
+            existing.api_key = api_key
+            existing.library_type = config.library_type
+            logger.info(f"Updated Zotero config for user {current_user.id}")
+        else:
+            new_config = UserZotero(
+                user_id=current_user.id,
+                zotero_user_id=z_id,
+                api_key=api_key,
+                library_type=config.library_type
+            )
+            db.add(new_config)
+            logger.info(f"Created new Zotero config for user {current_user.id}")
+        
+        db.commit()
+        
+        if existing:
+            db.refresh(existing)
+        
+        return {"message": "Zotero connected successfully!", "status": "success"}
     
-    db.commit()
-    return {"message": "Zotero connected successfully!"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error saving Zotero config: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to save configuration: {str(e)}"
+        )
 
 @router.get("/zotero/config", response_model=ZoteroConfigResponse)
 async def get_zotero_config(
@@ -74,7 +99,6 @@ async def get_zotero_config(
             id=0,
             user_id=current_user.id,
             zotero_user_id="",
-            api_key="",
             library_type="user",
             last_sync=None
         )

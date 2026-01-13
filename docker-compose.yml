@@ -49,7 +49,7 @@ services:
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:5173}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
     volumes:
-      # - ./app:/app/app
+      - ./app:/app/app
       - ./uploads:/app/uploads
       - ./logs:/app/logs
       - ./alembic.ini:/app/alembic.ini

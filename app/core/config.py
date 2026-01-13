@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://redis:6379/0"
     
     # API Settings
-    GOOGLE_API_KEY: str = "AIzaSyBlguqa3reXkZ99_e2z8fY42VSJDa2BVJ4"
+    GOOGLE_API_KEY: str = ""  # Will be loaded from .env file
     
     # Security
     SECRET_KEY: str = "09d25e094faa6ca2556c818166b7a9563b93f7099f6f0f4caa6cf63b88e8d3e7"

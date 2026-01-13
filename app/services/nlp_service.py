@@ -14,6 +14,11 @@ logger = logging.getLogger(__name__)
 # Configure Gemini API
 if settings.GOOGLE_API_KEY:
     genai.configure(api_key=settings.GOOGLE_API_KEY)
+    # Log first 10 and last 10 characters for verification (security practice)
+    masked_key = f"{settings.GOOGLE_API_KEY[:10]}...{settings.GOOGLE_API_KEY[-10:]}"
+    logger.info(f"✅ Gemini API configured with key: {masked_key}")
+else:
+    logger.warning("⚠️ GOOGLE_API_KEY not found in settings!")
 
 # Global Settings
 MAX_CHARS_FOR_MODEL = 12000
@@ -386,6 +391,311 @@ Text:
             logger.error(f"Error calculating similarity: {e}")
             return 0.0
     
+    async def generate_paper_outline(self, title: str, lang: str = "id", doc_content: str = None) -> dict:
+        """
+        Generate research paper outline (IMRaD structure) berdasarkan judul dan konten dokumen.
+        Jika doc_content disediakan, akan menganalisis paper tersebut untuk membuat outline yang spesifik.
+        Struktur standar paper internasional.
+        """
+        import json
+        import re
+        
+        try:
+            # Jika ada konten dokumen, gunakan untuk konteks yang lebih spesifik
+            doc_context = ""
+            if doc_content:
+                # Ambil excerpt dari dokumen (maksimal 3000 karakter untuk tidak overload token)
+                excerpt = doc_content[:3000].replace('\n', ' ')
+                doc_context = f"\n\nKONTEN PAPER REFERENSI (Excerpt):\n{excerpt}...\n\n"
+            
+            if lang == "en":
+                system_role = "You are an experienced academic research advisor specializing in research paper structure and methodology."
+                
+                if doc_content:
+                    # Prompt dengan konteks dokumen
+                    user_request = f"""
+                    Create a DETAILED Research Paper Outline based on the title: "{title}".
+                    {doc_context}
+                    
+                    IMPORTANT: Analyze the provided paper excerpt above and create an outline that is SPECIFIC to this paper's content, methodology, and findings.
+                    
+                    Use the standard IMRaD (Introduction, Methods, Results, and Discussion) structure.
+                    
+                    REQUIREMENTS:
+                    1. Extract specific methods, algorithms, or approaches mentioned in the paper
+                    2. Identify the actual research gap addressed by this paper
+                    3. Reference specific findings or results discussed
+                    4. Mention concrete metrics, evaluation methods, or datasets used
+                    5. Be specific about the problem domain and application context
+                    
+                    Return valid JSON with this exact structure:
+                    {{
+                        "ABSTRACT": [
+                            {{"sub": "Abstract", "guide": "Concise summary (150-250 words) covering: [specific background from paper], [specific objective], [specific method used], key findings, and conclusion."}}
+                        ],
+                        "1. INTRODUCTION": [
+                            {{"sub": "1.1 Background", "guide": "Introduce [specific research topic from paper] and its significance in [specific field/domain]."}},
+                            {{"sub": "1.2 Research Gap", "guide": "Identify the specific gap: [mention actual problem/limitation addressed by this paper]."}},
+                            {{"sub": "1.3 Research Objectives", "guide": "State objectives: [extract specific goals from the paper content]."}},
+                            {{"sub": "1.4 Research Questions", "guide": "Formulate 2-3 research questions based on paper's focus."}},
+                            {{"sub": "1.5 Paper Organization", "guide": "Brief overview of this paper's structure."}}
+                        ],
+                        "2. LITERATURE REVIEW": [
+                            {{"sub": "2.1 Theoretical Foundation", "guide": "Discuss [specific theories/concepts mentioned in paper]."}},
+                            {{"sub": "2.2 Related Work", "guide": "Review previous studies in [specific area], highlighting their findings and limitations compared to this paper's approach."}},
+                            {{"sub": "2.3 Conceptual Framework", "guide": "Present the framework: [mention specific model/architecture used]."}}
+                        ],
+                        "3. RESEARCH METHOD": [
+                            {{"sub": "3.1 Research Design", "guide": "Describe approach: [extract actual methodology - e.g., experimental, case study, etc.]."}},
+                            {{"sub": "3.2 Data Collection", "guide": "Explain data sources: [mention specific datasets, sample size, or data types used]."}},
+                            {{"sub": "3.3 Data Analysis", "guide": "Detail techniques: [mention specific algorithms, tools, or statistical methods used]."}},
+                            {{"sub": "3.4 Validity and Reliability", "guide": "Discuss quality measures: [mention validation approach used]."}}
+                        ],
+                        "4. RESULTS": [
+                            {{"sub": "4.1 Descriptive Statistics", "guide": "Present demographic or descriptive data: [reference specific metrics from paper]."}},
+                            {{"sub": "4.2 Main Findings", "guide": "Report key results: [mention specific performance metrics, accuracy, or outcomes]."}},
+                            {{"sub": "4.3 Additional Analysis", "guide": "Present supplementary findings: [reference comparative results or ablation studies]."}}
+                        ],
+                        "5. DISCUSSION": [
+                            {{"sub": "5.1 Interpretation of Findings", "guide": "Interpret results in context: [relate to specific research questions and previous work]."}},
+                            {{"sub": "5.2 Theoretical Implications", "guide": "Discuss contributions: [how this paper advances the field]."}},
+                            {{"sub": "5.3 Practical Implications", "guide": "Explain applications: [specific use cases or implementation scenarios]."}},
+                            {{"sub": "5.4 Limitations", "guide": "Acknowledge limitations: [mention constraints or scope limitations]."}}
+                        ],
+                        "6. CONCLUSION": [
+                            {{"sub": "6.1 Summary", "guide": "Summarize: [key findings and contributions of this specific paper]."}},
+                            {{"sub": "6.2 Contributions", "guide": "Highlight: [main novel contributions or improvements]."}},
+                            {{"sub": "6.3 Future Research", "guide": "Suggest directions: [based on this paper's limitations and potential extensions]."}}
+                        ],
+                        "REFERENCES": [
+                            {{"sub": "References", "guide": "List all cited sources (IEEE/APA style). Include key references from related work section."}}
+                        ]
+                    }}
+                    """
+                else:
+                    # Prompt generic (tanpa konteks dokumen)
+                    user_request = f"""
+                    Create a DETAILED Research Paper Outline based on the title: "{title}".
+                    
+                    Use the standard IMRaD (Introduction, Methods, Results, and Discussion) structure commonly used in academic journals.
+                    
+                    STRUCTURE REQUIREMENTS:
+                    1. Abstract - Brief summary of the entire paper
+                    2. Introduction - Background, research gap, and objectives
+                    3. Literature Review/Related Work - Previous research and theoretical framework
+                    4. Research Method/Methodology - Research design, data collection, analysis techniques
+                    5. Results - Findings and data presentation
+                    6. Discussion - Interpretation of results, implications
+                    7. Conclusion - Summary and future work recommendations
+                    8. References - Citation list (placeholder)
+
+                    Return valid JSON with this exact structure:
+                    {{
+                        "ABSTRACT": [
+                            {{"sub": "Abstract", "guide": "Provide a concise summary (150-250 words) covering: background, objective, method, key findings, and conclusion."}}
+                        ],
+                        "1. INTRODUCTION": [
+                            {{"sub": "1.1 Background", "guide": "Introduce the research topic and its significance in the field."}},
+                            {{"sub": "1.2 Research Gap", "guide": "Identify the gap or problem this research addresses."}},
+                            {{"sub": "1.3 Research Objectives", "guide": "State clear, specific objectives of this study."}},
+                            {{"sub": "1.4 Research Questions", "guide": "Formulate 2-3 research questions."}},
+                            {{"sub": "1.5 Paper Organization", "guide": "Brief overview of paper structure."}}
+                        ],
+                        "2. LITERATURE REVIEW": [
+                            {{"sub": "2.1 Theoretical Foundation", "guide": "Discuss main theories and concepts relevant to your topic."}},
+                            {{"sub": "2.2 Related Work", "guide": "Review previous studies, highlight their findings and limitations."}},
+                            {{"sub": "2.3 Conceptual Framework", "guide": "Present the conceptual model or framework guiding this research."}}
+                        ],
+                        "3. RESEARCH METHOD": [
+                            {{"sub": "3.1 Research Design", "guide": "Describe the overall research approach (qualitative/quantitative/mixed)."}},
+                            {{"sub": "3.2 Data Collection", "guide": "Explain data sources, sampling method, and collection procedures."}},
+                            {{"sub": "3.3 Data Analysis", "guide": "Detail the analysis techniques, tools, and procedures used."}},
+                            {{"sub": "3.4 Validity and Reliability", "guide": "Discuss measures taken to ensure research quality."}}
+                        ],
+                        "4. RESULTS": [
+                            {{"sub": "4.1 Descriptive Statistics", "guide": "Present demographic or descriptive data."}},
+                            {{"sub": "4.2 Main Findings", "guide": "Report key results addressing each research question."}},
+                            {{"sub": "4.3 Additional Analysis", "guide": "Present supplementary findings or correlations."}}
+                        ],
+                        "5. DISCUSSION": [
+                            {{"sub": "5.1 Interpretation of Findings", "guide": "Interpret results in context of research questions and literature."}},
+                            {{"sub": "5.2 Theoretical Implications", "guide": "Discuss how findings contribute to existing theory."}},
+                            {{"sub": "5.3 Practical Implications", "guide": "Explain practical applications of the findings."}},
+                            {{"sub": "5.4 Limitations", "guide": "Acknowledge research limitations honestly."}}
+                        ],
+                        "6. CONCLUSION": [
+                            {{"sub": "6.1 Summary", "guide": "Concisely summarize key findings."}},
+                            {{"sub": "6.2 Contributions", "guide": "Highlight the study's main contributions."}},
+                            {{"sub": "6.3 Future Research", "guide": "Suggest directions for future studies."}}
+                        ],
+                        "REFERENCES": [
+                            {{"sub": "References", "guide": "List all cited sources in appropriate citation style (APA/IEEE/etc.)."}}
+                        ]
+                    }}
+                    """
+            else:
+                # Versi Indonesia
+                system_role = "Anda adalah dosen pembimbing penelitian berpengalaman yang ahli dalam struktur dan metodologi paper penelitian."
+                
+                if doc_content:
+                    # Prompt dengan konteks dokumen
+                    user_request = f"""
+                    Buatkan Kerangka Paper Penelitian yang DETAIL dan SPESIFIK berdasarkan judul: "{title}".
+                    {doc_context}
+                    
+                    PENTING: Analisis excerpt paper referensi di atas dan buatkan outline yang SPESIFIK sesuai konten, metodologi, dan temuan paper tersebut.
+                    
+                    Gunakan struktur standar paper internasional (IMRaD: Introduction, Methods, Results, Discussion).
+                    
+                    PERSYARATAN:
+                    1. Ekstrak metode, algoritma, atau pendekatan spesifik yang disebutkan dalam paper
+                    2. Identifikasi gap penelitian yang sebenarnya diangkat paper ini
+                    3. Referensikan temuan atau hasil spesifik yang dibahas
+                    4. Sebutkan metrik, metode evaluasi, atau dataset konkret yang digunakan
+                    5. Spesifik tentang domain masalah dan konteks aplikasi
+
+                    Output HARUS JSON valid dengan struktur persis seperti ini:
+                    {{
+                        "ABSTRAK": [
+                            {{"sub": "Abstrak", "guide": "Ringkasan singkat (150-250 kata) mencakup: [latar belakang spesifik dari paper], [tujuan spesifik], [metode yang digunakan], temuan utama, dan kesimpulan."}}
+                        ],
+                        "1. PENDAHULUAN": [
+                            {{"sub": "1.1 Latar Belakang", "guide": "Perkenalkan [topik penelitian spesifik dari paper] dan signifikansinya di [bidang/domain spesifik]."}},
+                            {{"sub": "1.2 Gap Penelitian", "guide": "Identifikasi gap spesifik: [sebutkan masalah/keterbatasan aktual yang diatasi paper ini]."}},
+                            {{"sub": "1.3 Tujuan Penelitian", "guide": "Nyatakan tujuan: [ekstrak goal spesifik dari konten paper]."}},
+                            {{"sub": "1.4 Pertanyaan Penelitian", "guide": "Rumuskan 2-3 pertanyaan penelitian berdasarkan fokus paper."}},
+                            {{"sub": "1.5 Organisasi Paper", "guide": "Gambaran singkat struktur paper ini."}}
+                        ],
+                        "2. TINJAUAN PUSTAKA": [
+                            {{"sub": "2.1 Landasan Teori", "guide": "Bahas [teori/konsep spesifik yang disebutkan dalam paper]."}},
+                            {{"sub": "2.2 Penelitian Terdahulu", "guide": "Tinjau studi sebelumnya di [area spesifik], sorot temuan dan keterbatasan dibanding pendekatan paper ini."}},
+                            {{"sub": "2.3 Kerangka Konseptual", "guide": "Sajikan kerangka: [sebutkan model/arsitektur spesifik yang digunakan]."}}
+                        ],
+                        "3. METODE PENELITIAN": [
+                            {{"sub": "3.1 Desain Penelitian", "guide": "Jelaskan pendekatan: [ekstrak metodologi aktual - misal: eksperimental, studi kasus, dll]."}},
+                            {{"sub": "3.2 Pengumpulan Data", "guide": "Jelaskan sumber data: [sebutkan dataset spesifik, ukuran sampel, atau jenis data yang digunakan]."}},
+                            {{"sub": "3.3 Analisis Data", "guide": "Rinci teknik: [sebutkan algoritma, tools, atau metode statistik spesifik yang digunakan]."}},
+                            {{"sub": "3.4 Validitas dan Reliabilitas", "guide": "Diskusikan quality measures: [sebutkan pendekatan validasi yang digunakan]."}}
+                        ],
+                        "4. HASIL": [
+                            {{"sub": "4.1 Statistik Deskriptif", "guide": "Sajikan data demografis atau deskriptif: [referensikan metrik spesifik dari paper]."}},
+                            {{"sub": "4.2 Temuan Utama", "guide": "Laporkan hasil kunci: [sebutkan metrik performa, akurasi, atau outcome spesifik]."}},
+                            {{"sub": "4.3 Analisis Tambahan", "guide": "Sajikan temuan tambahan: [referensikan hasil komparatif atau ablation studies]."}}
+                        ],
+                        "5. PEMBAHASAN": [
+                            {{"sub": "5.1 Interpretasi Temuan", "guide": "Interpretasikan hasil dalam konteks: [kaitkan dengan pertanyaan penelitian dan penelitian sebelumnya]."}},
+                            {{"sub": "5.2 Implikasi Teoritis", "guide": "Diskusikan kontribusi: [bagaimana paper ini memajukan bidang]."}},
+                            {{"sub": "5.3 Implikasi Praktis", "guide": "Jelaskan aplikasi: [use case atau skenario implementasi spesifik]."}},
+                            {{"sub": "5.4 Keterbatasan", "guide": "Akui keterbatasan: [sebutkan constraints atau scope limitations]."}}
+                        ],
+                        "6. KESIMPULAN": [
+                            {{"sub": "6.1 Ringkasan", "guide": "Ringkas: [temuan kunci dan kontribusi paper spesifik ini]."}},
+                            {{"sub": "6.2 Kontribusi", "guide": "Sorot: [kontribusi novel utama atau improvement]."}},
+                            {{"sub": "6.3 Penelitian Masa Depan", "guide": "Sarankan arah: [berdasarkan keterbatasan dan potensi ekstensi paper ini]."}}
+                        ],
+                        "DAFTAR PUSTAKA": [
+                            {{"sub": "Daftar Pustaka", "guide": "Daftar semua sumber yang dikutip (gaya IEEE/APA). Sertakan referensi kunci dari bagian related work."}}
+                        ]
+                    }}
+                    """
+                else:
+                    # Prompt generic (tanpa konteks dokumen)
+                    user_request = f"""
+                    Buatkan Kerangka Paper Penelitian yang DETAIL berdasarkan judul: "{title}".
+                    
+                    Gunakan struktur standar paper internasional (IMRaD: Introduction, Methods, Results, Discussion).
+                    
+                    PERSYARATAN STRUKTUR:
+                    1. Abstract - Ringkasan singkat seluruh paper
+                    2. Pendahuluan - Latar belakang, gap penelitian, tujuan
+                    3. Tinjauan Pustaka - Penelitian terdahulu dan kerangka teori
+                    4. Metode Penelitian - Desain penelitian, pengumpulan data, teknik analisis
+                    5. Hasil - Temuan dan presentasi data
+                    6. Pembahasan - Interpretasi hasil, implikasi
+                    7. Kesimpulan - Ringkasan dan rekomendasi penelitian lanjutan
+                    8. Daftar Pustaka - Daftar sitasi (placeholder)
+
+                    Output HARUS JSON valid dengan struktur persis seperti ini:
+                    {{
+                        "ABSTRAK": [
+                            {{"sub": "Abstrak", "guide": "Tulis ringkasan singkat (150-250 kata) mencakup: latar belakang, tujuan, metode, temuan utama, dan kesimpulan."}}
+                        ],
+                        "1. PENDAHULUAN": [
+                            {{"sub": "1.1 Latar Belakang", "guide": "Perkenalkan topik penelitian dan signifikansinya di bidang terkait."}},
+                            {{"sub": "1.2 Gap Penelitian", "guide": "Identifikasi kesenjangan atau masalah yang diatasi penelitian ini."}},
+                            {{"sub": "1.3 Tujuan Penelitian", "guide": "Nyatakan tujuan spesifik dan jelas dari studi ini."}},
+                            {{"sub": "1.4 Pertanyaan Penelitian", "guide": "Rumuskan 2-3 pertanyaan penelitian."}},
+                            {{"sub": "1.5 Organisasi Paper", "guide": "Gambaran singkat struktur paper."}}
+                        ],
+                        "2. TINJAUAN PUSTAKA": [
+                            {{"sub": "2.1 Landasan Teori", "guide": "Bahas teori dan konsep utama yang relevan dengan topik Anda."}},
+                            {{"sub": "2.2 Penelitian Terdahulu", "guide": "Tinjau studi sebelumnya, sorot temuan dan keterbatasannya."}},
+                            {{"sub": "2.3 Kerangka Konseptual", "guide": "Sajikan model atau kerangka konseptual yang memandu penelitian ini."}}
+                        ],
+                        "3. METODE PENELITIAN": [
+                            {{"sub": "3.1 Desain Penelitian", "guide": "Jelaskan pendekatan penelitian secara keseluruhan (kualitatif/kuantitatif/mixed)."}},
+                            {{"sub": "3.2 Pengumpulan Data", "guide": "Jelaskan sumber data, metode sampling, dan prosedur pengumpulan."}},
+                            {{"sub": "3.3 Analisis Data", "guide": "Rinci teknik analisis, tools, dan prosedur yang digunakan."}},
+                            {{"sub": "3.4 Validitas dan Reliabilitas", "guide": "Diskusikan langkah-langkah untuk memastikan kualitas penelitian."}}
+                        ],
+                        "4. HASIL": [
+                            {{"sub": "4.1 Statistik Deskriptif", "guide": "Sajikan data demografis atau deskriptif."}},
+                            {{"sub": "4.2 Temuan Utama", "guide": "Laporkan hasil kunci yang menjawab setiap pertanyaan penelitian."}},
+                            {{"sub": "4.3 Analisis Tambahan", "guide": "Sajikan temuan tambahan atau korelasi."}}
+                        ],
+                        "5. PEMBAHASAN": [
+                            {{"sub": "5.1 Interpretasi Temuan", "guide": "Interpretasikan hasil dalam konteks pertanyaan penelitian dan literatur."}},
+                            {{"sub": "5.2 Implikasi Teoritis", "guide": "Diskusikan bagaimana temuan berkontribusi pada teori yang ada."}},
+                            {{"sub": "5.3 Implikasi Praktis", "guide": "Jelaskan aplikasi praktis dari temuan."}},
+                            {{"sub": "5.4 Keterbatasan", "guide": "Akui keterbatasan penelitian secara jujur."}}
+                        ],
+                        "6. KESIMPULAN": [
+                            {{"sub": "6.1 Ringkasan", "guide": "Ringkas temuan kunci secara singkat."}},
+                            {{"sub": "6.2 Kontribusi", "guide": "Sorot kontribusi utama studi ini."}},
+                            {{"sub": "6.3 Penelitian Masa Depan", "guide": "Sarankan arah untuk studi masa depan."}}
+                        ],
+                        "DAFTAR PUSTAKA": [
+                            {{"sub": "Daftar Pustaka", "guide": "Daftar semua sumber yang dikutip dengan gaya sitasi yang sesuai (APA/IEEE/dll)."}}
+                        ]
+                    }}
+                    """
+
+            prompt = f"{system_role}\n\n{user_request}"
+            response = self.model.generate_content(prompt)
+            raw_text = response.text
+            
+            # Cleaning JSON
+            clean_text = re.sub(r'```json\s*', '', raw_text)
+            clean_text = re.sub(r'```\s*', '', clean_text)
+            clean_text = clean_text.strip()
+            
+            start_idx = clean_text.find('{')
+            end_idx = clean_text.rfind('}')
+            if start_idx != -1 and end_idx != -1:
+                clean_text = clean_text[start_idx : end_idx + 1]
+            
+            outline_data = json.loads(clean_text)
+            logger.info(f"✅ Paper outline generated successfully (with_context={doc_content is not None})")
+            return outline_data
+
+        except Exception as e:
+            logger.error(f"❌ Error generating paper outline: {str(e)}")
+            # Return default structure
+            if lang == "en":
+                return {
+                    "ERROR": [{
+                        "sub": "Generation Failed",
+                        "guide": f"Unable to generate outline. Error: {str(e)}"
+                    }]
+                }
+            else:
+                return {
+                    "ERROR": [{
+                        "sub": "Gagal Generate",
+                        "guide": f"Tidak dapat membuat kerangka. Error: {str(e)}"
+                    }]
+                }
+    
     async def generate_research_ideas(self, docs_data: list, lang: str = "id") -> dict:
         """
         Fitur Premium: Menghasilkan Ide Skripsi Baru dari Sintesis Beberapa Paper.
@@ -400,13 +710,16 @@ Text:
             safe_text = doc['text'].replace('\n', ' ')[:2500] 
             context_text += f"\n--- PAPER_{i} (Judul: {doc['title']}) ---\n{safe_text}...\n"
 
+        # Calculate number of ideas to generate (min 3, max equal to number of papers)
+        num_ideas = max(3, len(docs_data))
+        
         # Prompt tingkat tinggi (Level S2/S3)
         prompt = f"""
         Bertindaklah sebagai Profesor Pembimbing Tesis Senior di bidang Sistem Informasi & Ilmu Komputer.
         Bahasa Output: {lang}
 
         TUGAS:
-        Berdasarkan {len(docs_data)} paper yang diberikan, sintesiskan 3 IDE TOPIK TUGAS AKHIR BARU yang inovatif tapi realistis untuk mahasiswa S1.
+        Berdasarkan {len(docs_data)} paper yang diberikan, sintesiskan {num_ideas} IDE TOPIK TUGAS AKHIR BARU yang inovatif tapi realistis untuk mahasiswa S1.
         
         Gunakan teknik sintesis berikut:
         1. Hybrid Method: Menggabungkan metode dari Paper A dengan Paper B.
@@ -455,21 +768,46 @@ Text:
     def extract_text_from_file(self, file_path: str) -> str:
         """
         Ekstraksi teks robust dengan fallback library.
+        Supports PDF and TXT files.
         """
         import os
         import fitz  # PyMuPDF (Lebih kuat daripada pypdf)
         
-        full_path = file_path if os.path.isabs(file_path) else os.path.join(os.getcwd(), file_path)
+        # Handle both absolute and relative paths
+        if os.path.isabs(file_path):
+            full_path = file_path
+        else:
+            # Try relative to /app first (Docker container)
+            full_path = os.path.join('/app', file_path)
+            if not os.path.exists(full_path):
+                # Fallback to current working directory
+                full_path = os.path.join(os.getcwd(), file_path)
+        
+        logger.info(f"📂 Resolved file path: {full_path}")
         
         if not os.path.exists(full_path):
+            logger.error(f"❌ File not found: {full_path}")
             return ""
 
+        # Check if it's a text file
+        if full_path.lower().endswith('.txt'):
+            try:
+                with open(full_path, 'r', encoding='utf-8') as f:
+                    text = f.read()
+                logger.info(f"✅ Extracted {len(text)} characters from TXT file")
+                return text
+            except Exception as e:
+                logger.error(f"❌ Failed to read TXT file: {e}")
+                return ""
+
+        # For PDF files
         text = ""
         try:
             # COBA 1: Gunakan PyMuPDF (fitz) - Paling cepat & tahan banting
             doc = fitz.open(full_path)
             for page in doc:
                 text += page.get_text() + "\n"
+            logger.info(f"✅ Extracted {len(text)} characters using PyMuPDF")
             return text
         except Exception as e:
             logger.warning(f"PyMuPDF gagal, mencoba pypdf: {e}")
@@ -480,9 +818,10 @@ Text:
                 reader = PdfReader(full_path)
                 for page in reader.pages:
                     text += page.extract_text() + "\n"
+                logger.info(f"✅ Extracted {len(text)} characters using pypdf")
                 return text
             except Exception as e2:
-                logger.error(f"Gagal ekstrak teks: {e2}")
+                logger.error(f"❌ Gagal ekstrak teks: {e2}")
                 return ""
     
     def _extract_text_from_pdf(self, file_path: str) -> Optional[str]:

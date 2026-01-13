@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi.responses import StreamingResponse, JSONResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import os
 import shutil
 from datetime import datetime
 from uuid import uuid4
+import base64
 
 from app.core.database import get_db
 from app.api.auth import get_current_user, get_current_dosen
@@ -94,9 +96,8 @@ async def upload_draft(
     db.commit()
     db.refresh(new_draft)
     
-    # Construct URL untuk frontend (sesuaikan domain/port jika perlu)
-    # Kita asumsikan folder 'uploads' di-mount di root static files
-    file_url = f"http://localhost:8000/{file_path}" 
+    # Return relative URL for frontend to construct proper request
+    file_url = f"/{file_path}" 
 
     return DraftResponse(
         id=new_draft.id,
@@ -127,7 +128,7 @@ async def get_my_drafts(
             version=d.version,
             status=d.status,
             created_at=d.created_at,
-            file_url=f"http://localhost:8000/{d.file_path}"
+            file_url=f"/{d.file_path}"
         ))
     return results
 
@@ -228,6 +229,136 @@ async def get_student_drafts(
             version=d.version,
             status=d.status,
             created_at=d.created_at,
-            file_url=f"http://localhost:8000/{d.file_path}"
+            file_url=f"/{d.file_path}"
         ))
     return results
+
+
+# ENDPOINT BARU: Return PDF as base64 to completely bypass IDM
+@router.get("/base64/{draft_id}")
+def get_draft_pdf_base64(
+    draft_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Return PDF as base64 encoded string to bypass IDM"""
+    draft = db.query(Draft).filter(Draft.id == draft_id).first()
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    
+    # Check file exists
+    file_path = draft.file_path
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    # Read file and encode as base64
+    with open(file_path, "rb") as f:
+        pdf_bytes = f.read()
+        pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
+    
+    return JSONResponse(
+        content={
+            "data": pdf_base64,
+            "filename": f"{draft.title}.pdf",
+            "size": len(pdf_bytes)
+        },
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+        }
+    )
+
+
+# ENDPOINT: Download PDF directly
+@router.get("/download/{draft_id}")
+def download_draft_pdf(
+    draft_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Download PDF file with proper headers"""
+    from fastapi.responses import FileResponse
+    
+    draft = db.query(Draft).filter(Draft.id == draft_id).first()
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    
+    # Check file exists
+    file_path = draft.file_path
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    return FileResponse(
+        path=file_path,
+        media_type="application/pdf",
+        filename=f"{draft.title}.pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{draft.title}.pdf"',
+            "Access-Control-Allow-Origin": "*",
+        }
+    )
+
+
+# ENDPOINT: Approve draft (Dosen Only) - Selesai Review / Layak
+@router.patch("/{draft_id}/approve")
+async def approve_draft(
+    draft_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Dosen menyetujui draft (status approved - layak tanpa revisi)"""
+    if current_user.role != "dosen":
+        raise HTTPException(status_code=403, detail="Hanya dosen yang bisa approve draft")
+    
+    draft = db.query(Draft).filter(Draft.id == draft_id).first()
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft tidak ditemukan")
+    
+    # Validasi: Dosen harus pembimbing mahasiswa ini
+    mahasiswa = db.query(Mahasiswa).filter(Mahasiswa.id == draft.mahasiswa_id).first()
+    dosen = db.query(Dosen).filter(Dosen.user_id == current_user.id).first()
+    
+    if not mahasiswa or mahasiswa.dosen_pembimbing_id != dosen.id:
+        raise HTTPException(status_code=403, detail="Anda bukan pembimbing mahasiswa ini")
+    
+    # Update status ke approved
+    draft.status = 'approved'
+    db.commit()
+    
+    return {
+        "message": "Draft disetujui - Mahasiswa tidak perlu revisi lagi",
+        "status": "approved"
+    }
+
+
+# ENDPOINT: Ubah status draft kembali ke reviewed (batalkan approval)
+@router.patch("/{draft_id}/unapprove")
+async def unapprove_draft(
+    draft_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Batalkan approval draft (kembalikan ke status reviewed)"""
+    if current_user.role != "dosen":
+        raise HTTPException(status_code=403, detail="Hanya dosen yang bisa mengubah status")
+    
+    draft = db.query(Draft).filter(Draft.id == draft_id).first()
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft tidak ditemukan")
+    
+    # Validasi: Dosen harus pembimbing mahasiswa ini
+    mahasiswa = db.query(Mahasiswa).filter(Mahasiswa.id == draft.mahasiswa_id).first()
+    dosen = db.query(Dosen).filter(Dosen.user_id == current_user.id).first()
+    
+    if not mahasiswa or mahasiswa.dosen_pembimbing_id != dosen.id:
+        raise HTTPException(status_code=403, detail="Anda bukan pembimbing mahasiswa ini")
+    
+    # Update status ke reviewed
+    draft.status = 'reviewed'
+    db.commit()
+    
+    return {
+        "message": "Status dikembalikan ke reviewed - Mahasiswa perlu revisi",
+        "status": "reviewed"
+    }

@@ -6,7 +6,7 @@ from sqlalchemy import or_, func
 
 from app.core.database import get_db
 from app.api.auth import get_current_dosen, get_current_user
-from app.models import Dosen, Mahasiswa, Dokumen, Catatan, Referensi, User
+from app.models import Dosen, Mahasiswa, Dokumen, Catatan, Referensi, User, Draft, DraftComment
 from app.schemas import (
     CatatanCreate, CatatanUpdate, CatatanResponse,
     DokumenResponse, DokumenDetailResponse,
@@ -64,20 +64,50 @@ async def get_dosen_dashboard_stats(
         Mahasiswa.dosen_pembimbing_id == current_dosen.id
     ).count()
     
-    # Hitung total dokumen dari semua mahasiswa bimbingan
-    total_dokumen = db.query(Dokumen).join(Mahasiswa).filter(
+    # Ambil nama-nama mahasiswa bimbingan
+    mahasiswa_list = db.query(Mahasiswa).options(
+        joinedload(Mahasiswa.user)
+    ).filter(
+        Mahasiswa.dosen_pembimbing_id == current_dosen.id
+    ).all()
+    mahasiswa_names = [mhs.user.nama for mhs in mahasiswa_list]
+    
+    # Hitung total draft dari semua mahasiswa bimbingan
+    total_drafts = db.query(Draft).join(Mahasiswa).filter(
         Mahasiswa.dosen_pembimbing_id == current_dosen.id
     ).count()
     
-    # Dokumen yang sudah dianalisis
-    dokumen_completed = db.query(Dokumen).join(Mahasiswa).filter(
+    # Hitung draft yang sudah direview
+    drafts_reviewed = db.query(Draft).join(Mahasiswa).filter(
         Mahasiswa.dosen_pembimbing_id == current_dosen.id,
-        Dokumen.status_analisis == 'completed'
+        Draft.status.in_(['reviewed', 'approved'])
     ).count()
     
-    # Total catatan yang diberikan
-    total_catatan = db.query(Catatan).filter(
-        Catatan.dosen_id == current_dosen.id
+    # Hitung draft yang sudah diapprove (layak tanpa revisi)
+    drafts_approved = db.query(Draft).join(Mahasiswa).filter(
+        Mahasiswa.dosen_pembimbing_id == current_dosen.id,
+        Draft.status == 'approved'
+    ).count()
+    
+    # Hitung mahasiswa yang punya minimal 1 draft approved
+    mahasiswa_approved = db.query(Mahasiswa).filter(
+        Mahasiswa.dosen_pembimbing_id == current_dosen.id,
+        Mahasiswa.id.in_(
+            db.query(Draft.mahasiswa_id).filter(Draft.status == 'approved')
+        )
+    ).count()
+    
+    # Hitung komentar dari dosen di draft comments
+    total_comments = db.query(DraftComment).join(
+        User, DraftComment.user_id == User.id
+    ).join(
+        Draft, DraftComment.draft_id == Draft.id
+    ).join(
+        Mahasiswa, Draft.mahasiswa_id == Mahasiswa.id
+    ).filter(
+        User.role == 'dosen',
+        User.id == current_dosen.user_id,
+        Mahasiswa.dosen_pembimbing_id == current_dosen.id
     ).count()
     
     # Referensi yang perlu divalidasi
@@ -88,9 +118,12 @@ async def get_dosen_dashboard_stats(
     
     return {
         "total_mahasiswa": total_mahasiswa,
-        "total_dokumen": total_dokumen,
-        "dokumen_completed": dokumen_completed,
-        "total_catatan": total_catatan,
+        "mahasiswa_names": mahasiswa_names,
+        "total_drafts": total_drafts,
+        "drafts_reviewed": drafts_reviewed,
+        "drafts_approved": drafts_approved,
+        "mahasiswa_approved": mahasiswa_approved,
+        "total_comments": total_comments,
         "referensi_pending": referensi_pending
     }
 
@@ -105,7 +138,8 @@ async def get_mahasiswa_bimbingan(
     
     mahasiswa_list = db.query(Mahasiswa).options(
         joinedload(Mahasiswa.user),
-        joinedload(Mahasiswa.dokumen)
+        joinedload(Mahasiswa.dokumen),
+        joinedload(Mahasiswa.drafts)
     ).filter(
         Mahasiswa.dosen_pembimbing_id == current_dosen.id
     ).all()
@@ -115,6 +149,11 @@ async def get_mahasiswa_bimbingan(
         total_docs = len(mhs.dokumen)
         completed_docs = sum(1 for doc in mhs.dokumen if doc.status_analisis == 'completed')
         
+        # Hitung draft mahasiswa
+        total_drafts = len(mhs.drafts)
+        reviewed_drafts = sum(1 for draft in mhs.drafts if draft.status in ['reviewed', 'approved'])
+        approved_drafts = sum(1 for draft in mhs.drafts if draft.status == 'approved')
+        
         result.append({
             "id": mhs.id,
             "nim": mhs.nim,
@@ -123,7 +162,10 @@ async def get_mahasiswa_bimbingan(
             "program_studi": mhs.program_studi,
             "angkatan": mhs.angkatan,
             "total_dokumen": total_docs,
-            "dokumen_completed": completed_docs
+            "dokumen_completed": completed_docs,
+            "total_drafts": total_drafts,
+            "drafts_reviewed": reviewed_drafts,
+            "drafts_approved": approved_drafts
         })
     
     return result

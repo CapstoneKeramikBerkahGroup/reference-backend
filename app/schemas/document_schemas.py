@@ -85,7 +85,7 @@ class DokumenResponse(DokumenBase):
     id: int
     mahasiswa_id: int
     nama_file: str
-    file_path: str
+    file_path: Optional[str] = None  # Allow None for backward compatibility
     format: str
     ukuran_kb: int
     tanggal_unggah: datetime

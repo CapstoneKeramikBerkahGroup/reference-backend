@@ -114,8 +114,15 @@ class ZoteroService:
         file_key = pdf_item['key']
         file_name = pdf_item['data'].get('filename', f"{ext_ref.source_id}.pdf")
         
-        # Buat path lokal
-        upload_dir = "/app/uploads"
+        # Get mahasiswa first to create proper directory
+        mahasiswa = db.query(Mahasiswa).filter(Mahasiswa.user_id == user_id).first()
+        if not mahasiswa:
+            raise Exception("Profil mahasiswa tidak ditemukan")
+        
+        # Buat path lokal dengan folder mahasiswa
+        upload_dir = f"uploads/mahasiswa_{mahasiswa.id}"
+        os.makedirs(upload_dir, exist_ok=True)
+        
         unique_filename = f"zotero_{uuid4().hex}_{file_name}"
         file_path = os.path.join(upload_dir, unique_filename)
 
@@ -133,16 +140,12 @@ class ZoteroService:
             raise Exception("Failed to download PDF from Zotero")
 
         # 5. Buat Entry di Tabel Dokumen
-        # Kita butuh ID Mahasiswa dari User ID
-        mahasiswa = db.query(Mahasiswa).filter(Mahasiswa.user_id == user_id).first()
-        if not mahasiswa:
-             raise Exception("Profil mahasiswa tidak ditemukan")
-
         new_doc = Dokumen(
             mahasiswa_id=mahasiswa.id,
             judul=ext_ref.title,
-            nama_file=file_name,
-            file_path=file_path,
+            nama_file=unique_filename,  # Use unique_filename dengan prefix zotero_
+            path_file=file_path,  # Set field yang NOT NULL di database
+            file_path=file_path,  # Set field yang nullable (backward compatibility)
             format="pdf",
             ukuran_kb=os.path.getsize(file_path) // 1024,
             status_analisis="pending" # Nanti diproses oleh worker
