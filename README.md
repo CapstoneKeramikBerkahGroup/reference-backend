@@ -66,6 +66,33 @@
   - Real-time status tracking
   - Progress monitoring via Redis
 
+### 🤖 **Google Gemini AI Integration**
+- **Research Gap Analysis**
+  - Gap matrix generation from multiple documents
+  - Strength & limitation identification
+  - Research opportunity detection
+  - Multi-language support (ID/EN)
+  - Smart author detection
+  
+- **Research Idea Generator**
+  - AI-powered research topic suggestions
+  - Literature-based idea generation
+  - Contextual recommendations
+  - Bilingual output support
+  
+- **Thesis Outline Generator**
+  - Automatic Chapter 1-3 outline generation
+  - Telkom University standard compliant
+  - Detailed sub-chapter structure
+  - Deductive Chapter 2 format
+  - Metodologi Penelitian template
+  
+- **Powered by Gemini 2.5 Flash**
+  - Fast response times
+  - High-quality Indonesian text generation
+  - Context-aware processing
+  - Cost-effective API usage
+
 ### 👥 **Pembimbingan System**
 - **For Students (Mahasiswa)**
   - Browse dosen by specialization
@@ -113,6 +140,7 @@
 - **Alembic** - Database migrations
 
 ### NLP & AI
+- **Google Gemini API** 2.5 Flash - AI-powered content generation
 - **spaCy** 3.x - Core NLP processing
 - **Transformers** (Hugging Face) - BART summarization
 - **Sentence Transformers** - Document embeddings
@@ -587,6 +615,118 @@ Content-Type: application/json
 }
 ```
 
+### Google Gemini AI Features
+
+#### Generate Research Gap Analysis
+```http
+POST /api/nlp/gap-analysis
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "dokumen_ids": [1, 2, 3],
+  "language": "id"  # "id" atau "en"
+}
+```
+
+Response:
+```json
+{
+  "papers": [
+    {
+      "title": "Paper Title",
+      "author": "Author Name",
+      "strength": "Kekuatan penelitian...",
+      "limitation": "Keterbatasan penelitian..."
+    }
+  ],
+  "research_opportunities": [
+    "Peluang penelitian 1",
+    "Peluang penelitian 2"
+  ]
+}
+```
+
+#### Generate Research Ideas
+```http
+POST /api/nlp/generate-ideas
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "dokumen_ids": [1, 2, 3],
+  "language": "id"
+}
+```
+
+Response:
+```json
+{
+  "ideas": [
+    {
+      "title": "Judul Penelitian",
+      "description": "Deskripsi lengkap...",
+      "methodology": "Metodologi yang disarankan...",
+      "expected_contribution": "Kontribusi yang diharapkan..."
+    }
+  ]
+}
+```
+
+#### Generate Thesis Outline
+```http
+POST /api/nlp/thesis-outline
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "title": "Judul Penelitian Anda",
+  "language": "id"  # "id" atau "en"
+}
+```
+
+Response:
+```json
+{
+  "bab1": {
+    "title": "BAB I PENDAHULUAN",
+    "sections": [
+      {
+        "section": "1.1",
+        "title": "Latar Belakang",
+        "description": "..."
+      }
+    ]
+  },
+  "bab2": { ... },
+  "bab3": { ... }
+}
+```
+
+#### Save Gap Analysis History
+```http
+POST /api/gap-analysis/save
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "title": "Analisis Gap - ML in Healthcare",
+  "result": { ... }  # Full gap analysis result
+}
+```
+
+#### Get Gap Analysis History
+```http
+GET /api/gap-analysis/list
+Authorization: Bearer {token}
+```
+
+#### Get Gap Analysis Detail
+```http
+GET /api/gap-analysis/{history_id}
+Authorization: Bearer {token}
+```
+
 ### Reference Validation
 
 #### Get Student References
@@ -638,10 +778,41 @@ Authorization: Bearer {token}
 | `MENDELEY_CLIENT_ID` | Mendeley app ID | - | For Mendeley integration |
 | `MENDELEY_CLIENT_SECRET` | Mendeley app secret | - | For Mendeley integration |
 | `MENDELEY_REDIRECT_URI` | OAuth callback URL | - | For Mendeley integration |
-| `GOOGLE_API_KEY` | Google API key | - | Optional |
+| `GOOGLE_API_KEY` | Google Gemini API key for AI features | - | ✅ Required for AI features |
 | `FRONTEND_URL` | Frontend application URL | `http://localhost:3000` | ✅ |
 | `CORS_ORIGINS` | Allowed CORS origins | `["http://localhost:3000"]` | ✅ |
 | `DEBUG` | Debug mode | `False` | ❌ |
+
+### Google Gemini API Setup
+
+1. Go to [Google AI Studio](https://aistudio.google.com/app/apikey)
+2. Click **Get API Key** or **Create API Key**
+3. Select or create a Google Cloud project
+4. Copy the generated API key
+5. Add to `.env` file:
+   ```env
+   GOOGLE_API_KEY=AIzaSy...your-api-key-here
+   ```
+
+**Features Enabled with Gemini API:**
+- ✅ Research Gap Analysis with multiple documents
+- ✅ AI-powered Research Idea Generator
+- ✅ Automatic Thesis Outline Generation (Bab 1-3)
+- ✅ Indonesian & English language support
+- ✅ Context-aware content generation
+
+**Model Used:** `gemini-2.5-flash`
+- Fast response times (<2 seconds)
+- Cost-effective for academic use
+- High-quality Indonesian text generation
+- Supports up to 32K tokens context
+
+**Free Tier:**
+- 60 requests per minute
+- 1,500 requests per day
+- 1 million tokens per day
+
+For more information: [Google AI Documentation](https://ai.google.dev/)
 
 ### Mendeley OAuth Setup
 
